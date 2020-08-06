@@ -129,7 +129,7 @@ def main():
 
                         # record valid spread
                         width = sell_level['strike'] - buy_level['strike']
-                        if (width <= 5.0) and (adjusted_profit > 0.0) and (risk_reward >= 0.5) and \
+                        if (width <= 5.0) and (adjusted_profit > 0.0) and (risk_reward >= 0.33) and \
                             (-sell_level['greeks']['delta'] < 0.3):
                             collection.append([
                                 symbol,

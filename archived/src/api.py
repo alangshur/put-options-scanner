@@ -10,7 +10,7 @@ class MarketAPI():
     def fetch_chain(self, expiration):
         try:
             url = 'https://sandbox.tradier.com/v1/markets/options/chains?symbol={}&expiration={}&greeks=true'.format(self.symbol, expiration)
-            headers = {'Authorization': 'Bearer 04Y6IBpk0kQ7n4KeoNwYt57Blnm1', 'Accept': 'application/json'}
+            headers = {'Authorization': 'Bearer IU8G1tns4ii3PxjIAIC7s2pwsgXk', 'Accept': 'application/json'}
             r_data = requests.get(url, headers=headers)
             chain = r_data.json()['options']['option']
             time.sleep(1)
@@ -20,7 +20,7 @@ class MarketAPI():
     def fetch_expirations(self):
         try:
             url = 'https://sandbox.tradier.com/v1/markets/options/expirations?symbol={}'.format(self.symbol)
-            headers = {'Authorization': 'Bearer 04Y6IBpk0kQ7n4KeoNwYt57Blnm1', 'Accept': 'application/json'}
+            headers = {'Authorization': 'Bearer IU8G1tns4ii3PxjIAIC7s2pwsgXk', 'Accept': 'application/json'}
             r_data = requests.get(url, headers=headers)
             expirations = r_data.json()['expirations']['date']
             time.sleep(1)
@@ -30,7 +30,7 @@ class MarketAPI():
     def fetch_underlying(self):
         try:
             url = 'https://sandbox.tradier.com/v1/markets/quotes?symbols={}'.format(self.symbol)
-            headers = {'Authorization': 'Bearer 04Y6IBpk0kQ7n4KeoNwYt57Blnm1', 'Accept': 'application/json'}
+            headers = {'Authorization': 'Bearer IU8G1tns4ii3PxjIAIC7s2pwsgXk', 'Accept': 'application/json'}
             r_data = requests.get(url, headers=headers)
             underlying = r_data.json()['quotes']['quote']
         except: return None

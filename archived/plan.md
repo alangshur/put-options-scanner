@@ -27,6 +27,8 @@ Improvements:
     - Filter out earnings/underlying movement (returns)/volatility cycles (forecasting IV)
     - Plot chart in value of a current spread to catch momentum
     - Alert to email/phone number with exception positions
+    - Build rr_percent and iv_z_score and short_delta (adj_profit) into single score
+    - Continuously monitor throughout day to find highest scoring positions in market
 
 Main philosophy:
     - Defined risked plays with near-or-greater-than 1:1 risk-return ratios. With OTM short positions (0.5-1.0 STD) and no significant downard pressure/events, the odds are simply in our favor — just need to be methodical which is the hardest part.
