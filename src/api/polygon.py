@@ -8,7 +8,7 @@ load_dotenv(verbose=True)
 
 class PolygonAPI():
 
-    def fetch_quotes_year(self, symbol, days):
+    def fetch_quotes_year(self, symbol):
         try:
 
             # get date range
@@ -30,4 +30,16 @@ class PolygonAPI():
             r_data = requests.get(url, headers=headers)
             quotes = r_data.json()['results']
         except: return None
-        return quotes
+
+        # format quotes
+        formatted_quotes = []
+        for quote in quotes:
+            formatted_quotes.append({
+                'open': quote['o'],
+                'high': quote['h'],
+                'low': quote['l'],
+                'close': quote['c'],
+                'volume': quote['v']
+            })
+
+        return formatted_quotes

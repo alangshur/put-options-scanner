@@ -1,0 +1,30 @@
+Measuring stock's probability of movement:
+
+1. Spread Selection:
+    - Underlying trending roughly upwards/sideways --> momentum engine
+    - Near 1:1 risk-reward ratio --> contract engine
+    - No upcoming earnings/binary events --> market engine
+    - Near peak in IVR chart --> volatility engine
+
+2. Portfolio Balancing
+
+3. Position Management
+
+
+
+ML Algorithms:
+    - Isolation forest
+    - Hurst exponent to predict market regime (random/trending/reverting)
+    - NN to forecast volatility
+    - Random forest to forecast volatility
+    - Dynamic hedging algorithm:
+        - Rolling
+        - Opening iron condor
+        - Opening iron butterfly
+        - Closing
+
+
+
+Building neutral portfolio:
+    - Deltra neutral to market: hedge market movement
+    - Volatility neutral to market: hedge market volatility
