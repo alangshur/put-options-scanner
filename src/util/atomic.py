@@ -4,14 +4,15 @@ from copy import deepcopy
 
 class AtomicInteger:
 
-    def __init__(self):
+    def __init__(self, value=0):
         self.lk = Lock()
-        self.integer = 0
+        self.integer = value
 
     def get(self):
         self.lk.acquire()
-        return self.integer
+        temp_int = self.integer
         self.lk.release()
+        return temp_int
 
     def fix(self, value):
         self.lk.acquire()
@@ -53,13 +54,15 @@ class AtomicList:
 
     def get(self):
         self.lk.acquire()
-        return deepcopy(self.list)
+        temp_list = deepcopy(self.list)
         self.lk.release()
+        return temp_list
 
     def size(self):
         self.lk.acquire()
-        return len(self.list)
+        temp_size = len(self.list)
         self.lk.release()
+        return temp_size
 
     def append(self, value):
         self.lk.acquire()
