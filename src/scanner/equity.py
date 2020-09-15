@@ -109,32 +109,35 @@ class EquityScannerThread(threading.Thread):
             try: symbol = self.queue.get(block=False)
             except Empty: return
 
-            # validate symbol
-            if not self.analyzer.validate(symbol=symbol):
-                self.queue.task_done()
-                continue
-
-            # fetch quotes
-            quotes = self.__fetch_quote(symbol)
-            if quotes is None: self.failure_counter.increment()
-            else:
-
-                # validate quotes
-                if not self.analyzer.validate(quotes=quotes):
-                    self.queue.task_done()
-                    continue
-
-                # run analyzer
-                name = self.analyzer.get_name()
-                result = self.analyzer.run(symbol, quotes)
-                self.result_map.update(
-                    key1=name, 
-                    key2=symbol, 
-                    value=result
-                )
+            # execute task
+            success = self.__execute_task(symbol)
+            if not success: self.failure_counter.increment()
 
             # complete task    
             self.queue.task_done()
+
+    def __execute_task(self, symbol):
+
+        # validate symbol
+        if not self.analyzer.validate(symbol=symbol):
+            return True
+
+        # fetch and validate quotes
+        quotes = self.__fetch_quote(symbol)
+        if quotes is None: return False
+        if not self.analyzer.validate(quotes=quotes):
+            return True
+
+        # run analyzer
+        name = self.analyzer.get_name()
+        result = self.analyzer.run(symbol, quotes)
+        self.result_map.update(
+            key1=name, 
+            key2=symbol, 
+            value=result
+        )
+
+        return True
 
     def __fetch_quote(self, symbol):
         quotes = None
@@ -143,7 +146,7 @@ class EquityScannerThread(threading.Thread):
         # retry api fetch
         while quotes is None:
             if attempts >= self.max_fetch_attempts: return None
-            quotes = self.api.fetch_quotes_year(symbol)
+            quotes = self.api.fetch_year_quotes(symbol)
             attempts += 1
 
         return quotes

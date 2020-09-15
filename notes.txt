@@ -9,7 +9,9 @@ Measuring stock's probability of movement:
 2. Portfolio Balancing
 
 3. Position Management
-
+    - Roll forwards for credit in DTE range
+    - Leg into iron condor or iron butterfly if too close to strike in DTE range
+    - Close if too close/below strike in DTE range
 
 
 ML Algorithms:

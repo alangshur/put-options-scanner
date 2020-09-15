@@ -10,11 +10,16 @@ from src.analyzer.cps import CreditPutSpreadAnalyzer
 #     num_threads=10
 # )
 
-scanner = OptionScanner(
-    uni_file='universe/active-equities.csv', 
-    analyzer=CreditPutSpreadAnalyzer(),
-    num_threads=20
-)
+# scanner = OptionScanner(
+#     uni_file='universe/active-equities.csv', 
+#     analyzer=CreditPutSpreadAnalyzer(),
+#     num_threads=30
+# )
 
-results = scanner.run()
-print(results)
+# results = scanner.run()
+# print(results)
+
+from src.api.polygon import PolygonAPI
+
+api = PolygonAPI()
+print(api.fetch_last_quote('AAPL'))

@@ -1,5 +1,6 @@
 from src.util.atomic import AtomicInteger, AtomicNestedMap, AtomicBool
 from src.api.tradier import TradierAPI
+from src.api.polygon import PolygonAPI
 from queue import Queue, Empty
 from tqdm import tqdm
 import threading
@@ -29,8 +30,9 @@ class OptionScanner:
     def run(self):
 
         # build resources
-        api = TradierAPI()
         queue = Queue()
+        api = TradierAPI()
+        secondary_api = PolygonAPI()
         failure_counter = AtomicInteger()
         result_map = AtomicNestedMap()
         api_rate_cv = threading.Condition()
@@ -49,6 +51,7 @@ class OptionScanner:
                 thread_num=i + 1, 
                 queue=queue, 
                 api=api, 
+                secondary_api=secondary_api,
                 analyzer=self.analyzer,
                 result_map=result_map,
                 failure_counter=failure_counter,
@@ -106,6 +109,7 @@ class OptionScannerThread(threading.Thread):
         thread_num, 
         queue, 
         api,
+        secondary_api,
         analyzer,
         result_map,
         failure_counter,
@@ -120,6 +124,7 @@ class OptionScannerThread(threading.Thread):
         self.id = thread_num
         self.queue = queue
         self.api = api
+        self.secondary_api = secondary_api
         self.analyzer = analyzer
         self.result_map = result_map
         self.failure_counter = failure_counter
@@ -135,41 +140,46 @@ class OptionScannerThread(threading.Thread):
             try: symbol = self.queue.get(block=False)
             except Empty: return
 
-            # validate symbol
-            if not self.analyzer.validate(symbol=symbol):
-                self.queue.task_done()
-                continue
-
-            # fetch expirations
-            expirations = self.__fetch_expirations(symbol)
-            if expirations is None: self.failure_counter.increment()
-            else:
-                for expiration in expirations:
-
-                    # validate expiration
-                    if not self.analyzer.validate(expiration=expiration):
-                        continue
-                    
-                    # fetch chains
-                    chain = self.__fetch_chain(symbol, expiration)
-                    if chain is None: self.failure_counter()
-                    else:
-
-                        # validate chain
-                        if not self.analyzer.validate(chain=chain):
-                            continue
-
-                        # run analyzer
-                        name = self.analyzer.get_name()
-                        result = self.analyzer.run(symbol, expiration, chain)
-                        self.result_map.update(
-                            key1=name,
-                            key2=(symbol, expiration),
-                            value=result
-                        )
+            # execute task
+            success = self.__execute_task(symbol)
+            if not success: self.failure_counter.increment()
 
             # complete task    
             self.queue.task_done()
+
+    def __execute_task(self, symbol):
+
+        # validate symbol
+        if not self.analyzer.validate(symbol=symbol):
+            return True
+
+        # fetch and validate quote
+        quote = self.__fetch_quote(symbol)
+        if quote is None: return False
+        if not self.analyzer.validate(quote=quote):
+            return True
+
+        # fetch and validate expirations
+        expirations = self.__fetch_expirations(symbol)
+        if expirations is None: return False
+        for expiration in expirations:
+            if not self.analyzer.validate(expiration=expiration):
+                continue
+            
+            # fetch and validate chains
+            chain = self.__fetch_chain(symbol, expiration)
+            if chain is None: continue
+            if not self.analyzer.validate(chain=chain):
+                continue
+
+            # run analyzer
+            name = self.analyzer.get_name()
+            result = self.analyzer.run(symbol, expiration, chain)
+            self.result_map.update(
+                key1=name,
+                key2=(symbol, expiration),
+                value=result
+            )
 
     def __fetch_expirations(self, symbol):
         expirations = None
@@ -212,6 +222,18 @@ class OptionScannerThread(threading.Thread):
                 self.api_rate_available.update(available)
 
         return chain
+
+    def __fetch_quote(self, symbol):
+        quote = None
+        attempts = 0
+
+        # retry api fetch
+        while quote is None:
+            if attempts >= self.max_fetch_attempts: return None
+            quote = self.secondary_api.fetch_last_quote(symbol)
+            attempts += 1
+
+        return quote
 
     def __wait_api_rate(self):
         with self.api_rate_cv:

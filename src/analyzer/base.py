@@ -34,12 +34,19 @@ class OptionAnalyzerBase(AnalyzerBase):
         super().__init__(name)
     
     @abstractmethod
-    def run(self, symbol, expiration, chain):
+    def run(self, 
+        symbol, 
+        quote,
+        expiration, 
+        chain
+    ):
+    
         raise NotImplementedError
 
     @abstractmethod
     def validate(self, 
         symbol=None, 
+        quote=None,
         expiration=None, 
         chain=None
     ):
