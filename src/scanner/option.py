@@ -1,7 +1,8 @@
-from src.util.atomic import AtomicInteger, AtomicNestedMap, AtomicBool
+from src.util.atomic import AtomicBool
 from src.api.tradier import TradierAPI
 from src.api.polygon import PolygonAPI
 from queue import Queue, Empty
+import multiprocessing
 from tqdm import tqdm
 import threading
 import math
@@ -14,30 +15,30 @@ class OptionScanner:
     def __init__(self, 
         uni_file, 
         analyzer,
-        num_threads=10
+        num_processes=10
     ):
 
         self.uni_file = uni_file
         self.analyzer = analyzer
-        self.num_threads = num_threads
+        self.num_processes = num_processes
 
         # fetch universe
         f = open(self.uni_file, 'r')
         uni_list = list(csv.reader(f))
-        self.uni = [row[0] for row in uni_list[1:]]
+        self.uni = [row[0] for row in uni_list[1:]]        
         f.close()
 
     def run(self):
 
         # build resources
-        queue = Queue()
         api = TradierAPI()
         secondary_api = PolygonAPI()
-        failure_counter = AtomicInteger()
-        result_map = AtomicNestedMap()
-        api_rate_cv = threading.Condition()
-        api_rate_expiry = AtomicInteger()
-        api_rate_available = AtomicInteger()
+        manager = multiprocessing.Manager()
+        queue = manager.Queue()
+        api_rate_cv = manager.Condition()
+        api_rate_avail = manager.Value('i', 200)
+        result_map = manager.dict()
+        failure_counter = manager.Value('i', 0)
         director_exit_flag = AtomicBool(value=False)
 
         # load queue
@@ -45,31 +46,28 @@ class OptionScanner:
             queue.put(symbol)
 
         # run scanner threads
-        s_threads = []
-        for i in range(self.num_threads):
-            s_thread = OptionScannerThread(
+        s_processes = []
+        for i in range(self.num_processes):
+            s_process = OptionScannerProcess(
                 thread_num=i + 1, 
-                queue=queue, 
+                analyzer=self.analyzer,
                 api=api, 
                 secondary_api=secondary_api,
-                analyzer=self.analyzer,
-                result_map=result_map,
-                failure_counter=failure_counter,
+                queue=queue, 
                 api_rate_cv=api_rate_cv,
-                api_rate_expiry=api_rate_expiry,
-                api_rate_available=api_rate_available
+                api_rate_avail=api_rate_avail,
+                result_map=result_map,
+                failure_counter=failure_counter
             )
-            s_thread.start()
-            s_threads.append(s_thread)
+            s_process.start()
+            s_processes.append(s_process)
 
         # run director thread
         d_thread = OptionDirectorThread(
-            num_threads=self.num_threads,
-            exit_flag=director_exit_flag,
             api=api,
             api_rate_cv=api_rate_cv,
-            api_rate_expiry=api_rate_expiry,
-            api_rate_available=api_rate_available
+            api_rate_avail=api_rate_avail,
+            exit_flag=director_exit_flag
         )
         d_thread.start()
 
@@ -77,14 +75,14 @@ class OptionScanner:
         self.__run_progress_bar(queue)
 
         # wait for threads
-        for t in s_threads: t.join()
+        for p in s_processes: p.join()
         director_exit_flag.update(True)
         d_thread.join()
 
         # return results
         return {
-            'results': result_map.get(),
-            'failures': failure_counter.get()
+            'results': result_map._getvalue(),
+            'failures': failure_counter.value
         }
 
     def __run_progress_bar(self, queue):
@@ -103,34 +101,31 @@ class OptionScanner:
         pbar.close()
 
 
-class OptionScannerThread(threading.Thread):
+class OptionScannerProcess(multiprocessing.Process):
 
     def __init__(self, 
         thread_num, 
-        queue, 
+        analyzer,
         api,
         secondary_api,
-        analyzer,
+        queue, 
+        api_rate_cv,
+        api_rate_avail,
         result_map,
         failure_counter,
-        api_rate_cv,
-        api_rate_expiry,
-        api_rate_available,
         max_fetch_attempts=5
     ):
 
-        threading.Thread.__init__(self)
-
-        self.id = thread_num
-        self.queue = queue
+        multiprocessing.Process.__init__(self)
+        self.thread_num = thread_num
+        self.analyzer = analyzer
         self.api = api
         self.secondary_api = secondary_api
-        self.analyzer = analyzer
+        self.queue = queue
+        self.api_rate_cv = api_rate_cv
+        self.api_rate_avail = api_rate_avail
         self.result_map = result_map
         self.failure_counter = failure_counter
-        self.api_rate_cv = api_rate_cv
-        self.api_rate_expiry = api_rate_expiry
-        self.api_rate_available = api_rate_available
         self.max_fetch_attempts = max_fetch_attempts
 
     def run(self):
@@ -138,25 +133,25 @@ class OptionScannerThread(threading.Thread):
 
             # start task
             try: symbol = self.queue.get(block=False)
-            except Empty: return
+            except Empty: break
 
             # execute task
             success = self.__execute_task(symbol)
-            if not success: self.failure_counter.increment()
+            if not success: self.failure_counter.value += 1
 
             # complete task    
             self.queue.task_done()
-
+        
     def __execute_task(self, symbol):
 
         # validate symbol
         if not self.analyzer.validate(symbol=symbol):
             return True
 
-        # fetch and validate quote
-        quote = self.__fetch_quote(symbol)
-        if quote is None: return False
-        if not self.analyzer.validate(quote=quote):
+        # fetch and validate underlying
+        underlying = self.__fetch_underlying(symbol)
+        if underlying is None: return False
+        if not self.analyzer.validate(underlying=underlying):
             return True
 
         # fetch and validate expirations
@@ -173,13 +168,10 @@ class OptionScannerThread(threading.Thread):
                 continue
 
             # run analyzer
-            name = self.analyzer.get_name()
-            result = self.analyzer.run(symbol, expiration, chain)
-            self.result_map.update(
-                key1=name,
-                key2=(symbol, expiration),
-                value=result
-            )
+            result = self.analyzer.run(symbol, underlying, expiration, chain)
+            self.result_map[(symbol, expiration)] = result
+
+        return True
 
     def __fetch_expirations(self, symbol):
         expirations = None
@@ -196,9 +188,8 @@ class OptionScannerThread(threading.Thread):
 
             # validate fetch results
             if fetch_results is not None:
-                expirations, available, _, expiry = fetch_results
-                self.api_rate_expiry.update(expiry)
-                self.api_rate_available.update(available)
+                expirations, available, _, _ = fetch_results
+                self.api_rate_avail.value = available
 
         return expirations
 
@@ -217,23 +208,22 @@ class OptionScannerThread(threading.Thread):
 
             # validate fetch results
             if fetch_results is not None:
-                chain, available, _, expiry = fetch_results
-                self.api_rate_expiry.update(expiry)
-                self.api_rate_available.update(available)
+                chain, available, _, _ = fetch_results
+                self.api_rate_avail.value = available
 
         return chain
 
-    def __fetch_quote(self, symbol):
-        quote = None
+    def __fetch_underlying(self, symbol):
+        underlying = None
         attempts = 0
 
         # retry api fetch
-        while quote is None:
+        while underlying is None:
             if attempts >= self.max_fetch_attempts: return None
-            quote = self.secondary_api.fetch_last_quote(symbol)
+            underlying = self.secondary_api.fetch_last_quote(symbol)
             attempts += 1
 
-        return quote
+        return underlying
 
     def __wait_api_rate(self):
         with self.api_rate_cv:
@@ -243,53 +233,33 @@ class OptionScannerThread(threading.Thread):
 class OptionDirectorThread(threading.Thread):
 
     def __init__(self,
-        num_threads,
-        exit_flag,
         api,
         api_rate_cv,
-        api_rate_expiry,
-        api_rate_available,
-        api_rate_buffer=10,
-        api_base_rate=0.5
+        api_rate_avail,
+        exit_flag
     ):
 
         threading.Thread.__init__(self)
-
-        self.num_threads = num_threads
-        self.exit_flag = exit_flag
         self.api = api
         self.api_rate_cv = api_rate_cv
-        self.api_rate_expiry = api_rate_expiry
-        self.api_rate_available = api_rate_available
-        self.api_rate_buffer = api_rate_buffer
-        self.api_base_rate = api_base_rate
+        self.api_rate_avail = api_rate_avail
+        self.exit_flag = exit_flag
 
     def run(self):
         while True:
 
             # check exit condition
-            if self.exit_flag.get(): return
-                
-            # get api rate data
-            available = self.api_rate_available.get() - self.api_rate_buffer
-            expiry = self.api_rate_expiry.get()
-
+            if self.exit_flag.get(): break
+            
             # throttle api
-            if available > 0 and expiry > 0:
-                now = int(time.time() * 1000)
-                new_rate = (expiry - now) / available
+            available_rate = self.api_rate_avail.value
+            if available_rate > 100: current_rate = 500
+            elif available_rate <= 30: current_rate = 30
+            else: current_rate = 2 * available_rate
 
-                # set new rate
-                if new_rate < 0: 
-                    self.__notify_api_rate()
-                else:
-                    time.sleep(new_rate / 1000)
-                    self.__notify_api_rate()
-
-            # warmup api
-            else:
-                time.sleep(self.api_base_rate)
-                self.__notify_api_rate()
+            # notify processes
+            time.sleep(60 / current_rate)
+            self.__notify_api_rate()
 
     def __notify_api_rate(self):
         with self.api_rate_cv:

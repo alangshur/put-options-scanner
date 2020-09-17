@@ -3,18 +3,17 @@ from abc import abstractmethod
 
 class AnalyzerBase:
 
-    def __init__(self, name):
-        self.name = name
+    @abstractmethod
+    def run(self):
+        raise NotImplementedError
 
-    def get_name(self):
-        return self.name
+    @abstractmethod
+    def validate(self):
+        raise NotImplementedError
 
 
 class EquityAnalyzerBase(AnalyzerBase):
 
-    def __init__(self, name):
-        super().__init__(name)
-    
     @abstractmethod
     def run(self, symbol, quotes):
         raise NotImplementedError
@@ -30,13 +29,10 @@ class EquityAnalyzerBase(AnalyzerBase):
 
 class OptionAnalyzerBase(AnalyzerBase):
 
-    def __init__(self, name):
-        super().__init__(name)
-    
     @abstractmethod
     def run(self, 
         symbol, 
-        quote,
+        underlying,
         expiration, 
         chain
     ):
@@ -46,10 +42,9 @@ class OptionAnalyzerBase(AnalyzerBase):
     @abstractmethod
     def validate(self, 
         symbol=None, 
-        quote=None,
+        underlying=None,
         expiration=None, 
         chain=None
     ):
     
         raise NotImplementedError
-

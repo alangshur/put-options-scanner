@@ -6,7 +6,7 @@ import numpy as np
 class RegressionAnalyzer(EquityAnalyzerBase):
 
     def __init__(self):
-        super().__init__('regression_analyzer')
+        super().__init__()
 
         # define day ranges
         self.YEAR_DAYS = 250
@@ -26,7 +26,13 @@ class RegressionAnalyzer(EquityAnalyzerBase):
         week_reg = self.__regress_range(quotes, self.WEEK_DAYS)
 
         # calculate score
-        return 0.0
+        return {
+            'week': week_reg,
+            'month': month_reg,
+            'three_month': three_month_reg,
+            'half_year': half_year_reg,
+            'year': year_reg
+        }
 
     def validate(self, 
         symbol=None, 

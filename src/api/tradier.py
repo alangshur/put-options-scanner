@@ -6,7 +6,7 @@ load_dotenv(verbose=True)
 
 class TradierAPI():
 
-    def fetch_chain(self, symbol, expiration):
+    def fetch_chain(self, symbol, expiration, greeks=False):
         try:
 
             # correct symbol
@@ -17,7 +17,7 @@ class TradierAPI():
                 'options/chains?' + \
                 'symbol={}&'.format(symbol) + \
                 'expiration={}&'.format(expiration) + \
-                'greeks=false'
+                'greeks={}'.format(str(greeks).lower())
             headers = {
                 'Authorization': 'Bearer ' + os.environ.get('TRADIER_API_KEY'), 
                 'Accept': 'application/json'
