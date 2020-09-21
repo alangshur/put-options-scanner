@@ -26,12 +26,19 @@ class OptionScanner:
         self.uni_file = uni_file
         self.analyzer = analyzer
         self.num_processes = num_processes
+        self.save_scan = save_scan
 
         # fetch universe
         f = open(self.uni_file, 'r')
         uni_list = list(csv.reader(f))
         self.uni = [row[0] for row in uni_list[1:]]        
         f.close()
+
+        # build scan name
+        d = str(datetime.datetime.today()).split(' ')[0]
+        t = str(datetime.datetime.today()).split(' ')[-1].split('.')[0]
+        u = self.uni_file.split('.')[0].split('/')[-1]
+        self.scan_name = '{}_{}_{}'.format(d, t, u)
 
     def run(self):
 
@@ -41,36 +48,40 @@ class OptionScanner:
         dividend_api = YFinanceAPI()
         risk_free_rate_api = YChartsAPI()
         manager = multiprocessing.Manager()
-        queue = manager.Queue()
+        symbol_queue = manager.Queue()
         api_rate_cv = manager.Condition()
         api_rate_avail = manager.Value('i', 200)
         result_map = manager.dict()
+        director_exit_flag = AtomicBool(value=False)
+
+        # build meta resources
         fetch_failure_counter = manager.Value('i', 0)
         analyzer_failure_counter = manager.Value('i', 0)
-        director_exit_flag = AtomicBool(value=False)
+        log_queue = manager.Queue()
 
         # fetch risk-free rate
         risk_free_rate = risk_free_rate_api.fetch_risk_free_rate()
 
         # load queue
         for symbol in self.uni:
-            queue.put(symbol)
+            symbol_queue.put(symbol)
 
         # run scanner threads
         s_processes = []
         for i in range(self.num_processes):
             s_process = OptionScannerProcess(
-                thread_num=i + 1, 
+                process_num=i + 1, 
                 analyzer=self.analyzer,
                 option_api=option_api, 
                 stock_api=stock_api,
                 dividend_api=dividend_api,
-                queue=queue, 
+                symbol_queue=symbol_queue, 
                 api_rate_cv=api_rate_cv,
                 api_rate_avail=api_rate_avail,
                 result_map=result_map,
                 fetch_failure_counter=fetch_failure_counter,
                 analyzer_failure_counter=analyzer_failure_counter,
+                log_queue=log_queue,
                 risk_free_rate=risk_free_rate
             )
             s_process.start()
@@ -80,20 +91,22 @@ class OptionScanner:
         d_thread = OptionDirectorThread(
             api_rate_cv=api_rate_cv,
             api_rate_avail=api_rate_avail,
-            exit_flag=director_exit_flag
+            exit_flag=director_exit_flag,
+            log_queue=log_queue
         )
         d_thread.start()
 
         # run progress bar
-        self.__run_progress_bar(queue)
+        self.__run_progress_bar(symbol_queue, log_queue)
 
         # wait for threads
         for p in s_processes: p.join()
         director_exit_flag.update(True)
         d_thread.join()
 
-        # format results
-        self.__save_scan(result_map._getvalue())
+        # save results
+        if self.save_scan:
+            self.__save_scan(result_map._getvalue())
 
         return {
             'results': result_map._getvalue(),
@@ -101,113 +114,127 @@ class OptionScanner:
             'analyzer_failure_count': analyzer_failure_counter.value
         }
 
-    def __run_progress_bar(self, queue):
-        size = queue.qsize()
+    def __run_progress_bar(self, symbol_queue, log_queue):
+        size = symbol_queue.qsize()
         pbar = tqdm(total=size)
 
+        # build log file
+        Path('log').mkdir(exist_ok=True)
+        f = open('log/{}.log'.format(self.scan_name), 'w+')
+
         # update prog bar
-        while not queue.empty():
-            time.sleep(0.1)
-            new_size = queue.qsize()
+        while not symbol_queue.empty():
+            self.__flush_logs(f, log_queue)
+            new_size = symbol_queue.qsize()
             pbar.update(size - new_size)
             size = new_size
+            time.sleep(0.1)
+        new_size = symbol_queue.qsize()
+        pbar.update(size - new_size)
 
         # wait for queue
-        queue.join()
+        symbol_queue.join()
         pbar.close()
+
+        # flush logs
+        self.__flush_logs(f, log_queue)
+        f.close()
 
     def __save_scan(self, scan):
         vals = sum(scan.values(), [])
 
-        # build scan name
-        Path('scan').mkdir(exist_ok=True)
-        d = str(datetime.datetime.today()).split(' ')[0]
-        t = str(datetime.datetime.today()).split(' ')[-1].split('.')[0]
-        u = self.uni_file.split('.')[0].split('/')[-1]
-        scan_name = '{}_{}_{}'.format(d, t, u)
-
         # save file
-        f = open('scan/{}.csv'.format(scan_name), 'w+')
+        Path('scan').mkdir(exist_ok=True)
+        f = open('scan/{}.csv'.format(self.scan_name), 'w+')
         csv.writer(f, delimiter=',').writerows(vals)
         f.close()
+
+    def __flush_logs(self, f, log_queue):
+        while not log_queue.empty():
+            f.write(log_queue.get() + '\n')
 
 
 class OptionScannerProcess(multiprocessing.Process):
 
     def __init__(self, 
-        thread_num, 
+        process_num, 
         analyzer,
         option_api,
         stock_api,
         dividend_api,
-        queue, 
+        symbol_queue, 
         api_rate_cv,
         api_rate_avail,
         result_map,
         fetch_failure_counter,
         analyzer_failure_counter,
         risk_free_rate,
+        log_queue,
         max_fetch_attempts=5
     ):
 
         multiprocessing.Process.__init__(self)
-        self.thread_num = thread_num
+        self.process_num = process_num
         self.analyzer = analyzer
         self.option_api = option_api
         self.stock_api = stock_api
         self.dividend_api = dividend_api
-        self.queue = queue
+        self.symbol_queue = symbol_queue
         self.api_rate_cv = api_rate_cv
         self.api_rate_avail = api_rate_avail
         self.result_map = result_map
         self.fetch_failure_counter = fetch_failure_counter
         self.analyzer_failure_counter = analyzer_failure_counter
         self.risk_free_rate = risk_free_rate
+        self.log_queue=log_queue
+
         self.max_fetch_attempts = max_fetch_attempts
+        self.process_name = self.__class__.__name__ + str(self.process_num)
 
     def run(self):
+        self.__log_message('INFO', 'starting scanner process')
+
+        # iteratively execute tasks
         while True:
-
-            # start task
-            try: symbol = self.queue.get(block=False)
+            try: symbol = self.symbol_queue.get(block=False)
             except Empty: break
+            self.__execute_task(symbol)
+            self.symbol_queue.task_done()
 
-            # execute task
-            success = self.__execute_task(symbol)
-            if not success: self.fetch_failure_counter.value += 1
+        self.__log_message('INFO', 'shutting down scanner process')
 
-            # complete task    
-            self.queue.task_done()
-        
     def __execute_task(self, symbol):
 
         # validate symbol
-        if not self.analyzer.validate(symbol=symbol):
-            return True
+        if not self.analyzer.validate(symbol=symbol): return
 
         # fetch/validate underlying
         underlying = self.__fetch_underlying(symbol)
-        if underlying is None: return False
-        if not self.analyzer.validate(underlying=underlying):
-            return True
+        if underlying is None:
+            self.__report_fetch_failure('underlying', (symbol,))
+            return
+        if not self.analyzer.validate(underlying=underlying): return
 
         # fetch/validate dividend yield
         dividend = self.dividend_api.fetch_annual_yield(symbol)
-        if not self.analyzer.validate(dividend=dividend):
-            return True
-
-        # fetch/validate expirations
+        if not self.analyzer.validate(dividend=dividend): return
+        
+        # fetch expirations
         expirations = self.__fetch_expirations(symbol)
-        if expirations is None: return False
+        if expirations is None:
+            self.__report_fetch_failure('expirations', (symbol,))
+            return
+
+        # iterate/validate expirations
         for expiration in expirations:
-            if not self.analyzer.validate(expiration=expiration):
-                continue
+            if not self.analyzer.validate(expiration=expiration): continue
             
             # fetch/validate chains
             chain = self.__fetch_chain(symbol, expiration)
-            if chain is None: continue
-            if not self.analyzer.validate(chain=chain):
+            if chain is None: 
+                self.__report_fetch_failure('chain', (symbol, expiration))
                 continue
+            if not self.analyzer.validate(chain=chain): continue
 
             # run analyzer
             try:
@@ -219,11 +246,11 @@ class OptionScannerProcess(multiprocessing.Process):
                     chain=chain, 
                     risk_free_rate=self.risk_free_rate
                 )
-            except:
-                self.analyzer_failure_counter.value += 1
+            except Exception as e:
+                self.__report_analyzer_failure((symbol, expiration), str(e))
 
         return True
-
+    
     def __fetch_expirations(self, symbol):
         expirations = None
         attempts = 0
@@ -279,22 +306,44 @@ class OptionScannerProcess(multiprocessing.Process):
     def __wait_api_rate(self):
         with self.api_rate_cv:
             self.api_rate_cv.wait()
-    
+
+    def __report_fetch_failure(self, component, fetch_data):
+        self.fetch_failure_counter.value += 1
+        self.__log_message('ERROR', '{} fetch failed for {}'.format(component, fetch_data))
+
+    def __report_analyzer_failure(self, analyzer_data, error_msg):
+        self.analyzer_failure_counter.value += 1
+        self.__log_message('ERROR', 'analyzer failed for {} with error \"{}\"'.format(analyzer_data, error_msg))
+
+    def __log_message(self, tag, msg):
+        log = str(datetime.datetime.today())
+        log += ' ' + tag
+        log += ' [' + self.process_name + ']'
+        log += ': ' + msg
+        self.log_queue.put(log)
+
 
 class OptionDirectorThread(threading.Thread):
 
     def __init__(self,
         api_rate_cv,
         api_rate_avail,
-        exit_flag
+        exit_flag,
+        log_queue
     ):
 
         threading.Thread.__init__(self)
         self.api_rate_cv = api_rate_cv
         self.api_rate_avail = api_rate_avail
         self.exit_flag = exit_flag
+        self.log_queue = log_queue
+
+        self.thread_name = self.__class__.__name__
 
     def run(self):
+        self.__log_message('INFO', 'starting director thread')
+        last_rate = 0
+
         while True:
 
             # check exit condition
@@ -306,10 +355,26 @@ class OptionDirectorThread(threading.Thread):
             elif available_rate <= 30: current_rate = 30
             else: current_rate = 2 * available_rate
 
+            # log rate change
+            if last_rate != current_rate:
+                tag = 'WARNING' if current_rate <= 100 else 'INFO'
+                msg = 'api rate changed from {} to {}'.format(last_rate, current_rate)
+                self.__log_message(tag, msg)
+                last_rate = current_rate
+
             # notify processes
             time.sleep(60 / current_rate)
             self.__notify_api_rate()
 
+        self.__log_message('INFO', 'shutting down director thread')
+
     def __notify_api_rate(self):
         with self.api_rate_cv:
             self.api_rate_cv.notify(n=1)
+
+    def __log_message(self, tag, msg):
+        log = str(datetime.datetime.today())
+        log += ' ' + tag
+        log += ' [' + self.thread_name + ']'
+        log += ': ' + msg
+        self.log_queue.put(log)

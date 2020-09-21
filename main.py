@@ -18,7 +18,7 @@ if __name__ == '__main__':
 
     analyzer = CreditPutSpreadAnalyzer()
     scanner = OptionScanner(
-        uni_file='universe/active-symbols.csv', 
+        uni_file='universe/test-symbols.csv', 
         analyzer=analyzer,
         num_processes=6
     )
