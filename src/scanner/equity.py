@@ -31,7 +31,8 @@ class EquityScanner:
         manager = multiprocessing.Manager()
         queue = manager.Queue()
         result_map = manager.dict()
-        failure_counter = manager.Value('i', 0)
+        fetch_failure_counter = manager.Value('i', 0)
+        analyzer_failure_counter = manager.Value('i', 0)
 
         # load queue
         for symbol in self.uni:
@@ -46,7 +47,8 @@ class EquityScanner:
                 api=api, 
                 queue=queue, 
                 result_map=result_map,
-                failure_counter=failure_counter
+                fetch_failure_counter=fetch_failure_counter,
+                analyzer_failure_counter=analyzer_failure_counter
             )
             s_process.start()
             s_processes.append(s_process)
@@ -60,7 +62,8 @@ class EquityScanner:
         # return results
         return {
             'results': result_map._getvalue(),
-            'failures': failure_counter.value
+            'fetch_failure_count': fetch_failure_counter.value,
+            'analyzer_failure_count': analyzer_failure_counter.value
         }
     
     def __run_progress_bar(self, queue):
@@ -87,7 +90,8 @@ class EquityScannerProcess(multiprocessing.Process):
         api,
         queue, 
         result_map,
-        failure_counter,
+        fetch_failure_counter,
+        analyzer_failure_counter,
         max_fetch_attempts=5
     ):
 
@@ -97,7 +101,8 @@ class EquityScannerProcess(multiprocessing.Process):
         self.api = api
         self.queue = queue
         self.result_map = result_map
-        self.failure_counter = failure_counter
+        self.fetch_failure_counter = fetch_failure_counter
+        self.analyzer_failure_counter = analyzer_failure_counter
         self.max_fetch_attempts = max_fetch_attempts
 
     def run(self):
@@ -109,7 +114,7 @@ class EquityScannerProcess(multiprocessing.Process):
 
             # execute task
             success = self.__execute_task(symbol)
-            if not success: self.failure_counter.value += 1
+            if not success: self.fetch_failure_counter.value += 1
 
             # complete task    
             self.queue.task_done()
@@ -127,8 +132,13 @@ class EquityScannerProcess(multiprocessing.Process):
             return True
 
         # run analyzer
-        result = self.analyzer.run(symbol, quotes)
-        self.result_map[symbol] = result
+        try:
+            self.result_map[symbol] = self.analyzer.run(
+                symbol=symbol, 
+                quotes=quotes
+            )
+        except: 
+            self.analyzer_failure_counter.value += 1
 
         return True
 

@@ -33,6 +33,7 @@ class OptionAnalyzerBase(AnalyzerBase):
     def run(self, 
         symbol, 
         underlying,
+        dividend,
         expiration, 
         chain
     ):
@@ -43,8 +44,9 @@ class OptionAnalyzerBase(AnalyzerBase):
     def validate(self, 
         symbol=None, 
         underlying=None,
+        dividend=None,
         expiration=None, 
-        chain=None
+        chain=None,
     ):
     
         raise NotImplementedError

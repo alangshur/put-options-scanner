@@ -1,13 +1,17 @@
 from src.util.atomic import AtomicBool
 from src.api.tradier import TradierAPI
 from src.api.polygon import PolygonAPI
+from src.api.yfinance import YFinanceAPI
+from src.api.ycharts import YChartsAPI
 from queue import Queue, Empty
+from pathlib import Path
 import multiprocessing
 from tqdm import tqdm
 import threading
+import datetime
 import math
-import csv
 import time
+import csv
 
 
 class OptionScanner:
@@ -15,7 +19,8 @@ class OptionScanner:
     def __init__(self, 
         uni_file, 
         analyzer,
-        num_processes=10
+        num_processes=10,
+        save_scan=True
     ):
 
         self.uni_file = uni_file
@@ -31,15 +36,21 @@ class OptionScanner:
     def run(self):
 
         # build resources
-        api = TradierAPI()
-        secondary_api = PolygonAPI()
+        option_api = TradierAPI()
+        stock_api = PolygonAPI()
+        dividend_api = YFinanceAPI()
+        risk_free_rate_api = YChartsAPI()
         manager = multiprocessing.Manager()
         queue = manager.Queue()
         api_rate_cv = manager.Condition()
         api_rate_avail = manager.Value('i', 200)
         result_map = manager.dict()
-        failure_counter = manager.Value('i', 0)
+        fetch_failure_counter = manager.Value('i', 0)
+        analyzer_failure_counter = manager.Value('i', 0)
         director_exit_flag = AtomicBool(value=False)
+
+        # fetch risk-free rate
+        risk_free_rate = risk_free_rate_api.fetch_risk_free_rate()
 
         # load queue
         for symbol in self.uni:
@@ -51,20 +62,22 @@ class OptionScanner:
             s_process = OptionScannerProcess(
                 thread_num=i + 1, 
                 analyzer=self.analyzer,
-                api=api, 
-                secondary_api=secondary_api,
+                option_api=option_api, 
+                stock_api=stock_api,
+                dividend_api=dividend_api,
                 queue=queue, 
                 api_rate_cv=api_rate_cv,
                 api_rate_avail=api_rate_avail,
                 result_map=result_map,
-                failure_counter=failure_counter
+                fetch_failure_counter=fetch_failure_counter,
+                analyzer_failure_counter=analyzer_failure_counter,
+                risk_free_rate=risk_free_rate
             )
             s_process.start()
             s_processes.append(s_process)
 
         # run director thread
         d_thread = OptionDirectorThread(
-            api=api,
             api_rate_cv=api_rate_cv,
             api_rate_avail=api_rate_avail,
             exit_flag=director_exit_flag
@@ -79,10 +92,13 @@ class OptionScanner:
         director_exit_flag.update(True)
         d_thread.join()
 
-        # return results
+        # format results
+        self.__save_scan(result_map._getvalue())
+
         return {
             'results': result_map._getvalue(),
-            'failures': failure_counter.value
+            'fetch_failure_count': fetch_failure_counter.value,
+            'analyzer_failure_count': analyzer_failure_counter.value
         }
 
     def __run_progress_bar(self, queue):
@@ -100,32 +116,53 @@ class OptionScanner:
         queue.join()
         pbar.close()
 
+    def __save_scan(self, scan):
+        vals = sum(scan.values(), [])
+
+        # build scan name
+        Path('scan').mkdir(exist_ok=True)
+        d = str(datetime.datetime.today()).split(' ')[0]
+        t = str(datetime.datetime.today()).split(' ')[-1].split('.')[0]
+        u = self.uni_file.split('.')[0].split('/')[-1]
+        scan_name = '{}_{}_{}'.format(d, t, u)
+
+        # save file
+        f = open('scan/{}.csv'.format(scan_name), 'w+')
+        csv.writer(f, delimiter=',').writerows(vals)
+        f.close()
+
 
 class OptionScannerProcess(multiprocessing.Process):
 
     def __init__(self, 
         thread_num, 
         analyzer,
-        api,
-        secondary_api,
+        option_api,
+        stock_api,
+        dividend_api,
         queue, 
         api_rate_cv,
         api_rate_avail,
         result_map,
-        failure_counter,
+        fetch_failure_counter,
+        analyzer_failure_counter,
+        risk_free_rate,
         max_fetch_attempts=5
     ):
 
         multiprocessing.Process.__init__(self)
         self.thread_num = thread_num
         self.analyzer = analyzer
-        self.api = api
-        self.secondary_api = secondary_api
+        self.option_api = option_api
+        self.stock_api = stock_api
+        self.dividend_api = dividend_api
         self.queue = queue
         self.api_rate_cv = api_rate_cv
         self.api_rate_avail = api_rate_avail
         self.result_map = result_map
-        self.failure_counter = failure_counter
+        self.fetch_failure_counter = fetch_failure_counter
+        self.analyzer_failure_counter = analyzer_failure_counter
+        self.risk_free_rate = risk_free_rate
         self.max_fetch_attempts = max_fetch_attempts
 
     def run(self):
@@ -137,7 +174,7 @@ class OptionScannerProcess(multiprocessing.Process):
 
             # execute task
             success = self.__execute_task(symbol)
-            if not success: self.failure_counter.value += 1
+            if not success: self.fetch_failure_counter.value += 1
 
             # complete task    
             self.queue.task_done()
@@ -148,28 +185,42 @@ class OptionScannerProcess(multiprocessing.Process):
         if not self.analyzer.validate(symbol=symbol):
             return True
 
-        # fetch and validate underlying
+        # fetch/validate underlying
         underlying = self.__fetch_underlying(symbol)
         if underlying is None: return False
         if not self.analyzer.validate(underlying=underlying):
             return True
 
-        # fetch and validate expirations
+        # fetch/validate dividend yield
+        dividend = self.dividend_api.fetch_annual_yield(symbol)
+        if not self.analyzer.validate(dividend=dividend):
+            return True
+
+        # fetch/validate expirations
         expirations = self.__fetch_expirations(symbol)
         if expirations is None: return False
         for expiration in expirations:
             if not self.analyzer.validate(expiration=expiration):
                 continue
             
-            # fetch and validate chains
+            # fetch/validate chains
             chain = self.__fetch_chain(symbol, expiration)
             if chain is None: continue
             if not self.analyzer.validate(chain=chain):
                 continue
 
             # run analyzer
-            result = self.analyzer.run(symbol, underlying, expiration, chain)
-            self.result_map[(symbol, expiration)] = result
+            try:
+                self.result_map[(symbol, expiration)] = self.analyzer.run(
+                    symbol=symbol, 
+                    underlying=underlying, 
+                    dividend=dividend, 
+                    expiration=expiration, 
+                    chain=chain, 
+                    risk_free_rate=self.risk_free_rate
+                )
+            except:
+                self.analyzer_failure_counter.value += 1
 
         return True
 
@@ -183,7 +234,7 @@ class OptionScannerProcess(multiprocessing.Process):
 
             # acquire api call
             self.__wait_api_rate()
-            fetch_results = self.api.fetch_expirations(symbol)
+            fetch_results = self.option_api.fetch_expirations(symbol)
             attempts += 1
 
             # validate fetch results
@@ -203,7 +254,7 @@ class OptionScannerProcess(multiprocessing.Process):
 
             # acquire api call
             self.__wait_api_rate()
-            fetch_results = self.api.fetch_chain(symbol, expiration)
+            fetch_results = self.option_api.fetch_chain(symbol, expiration)
             attempts += 1
 
             # validate fetch results
@@ -220,7 +271,7 @@ class OptionScannerProcess(multiprocessing.Process):
         # retry api fetch
         while underlying is None:
             if attempts >= self.max_fetch_attempts: return None
-            underlying = self.secondary_api.fetch_last_quote(symbol)
+            underlying = self.stock_api.fetch_last_quote(symbol)
             attempts += 1
 
         return underlying
@@ -233,14 +284,12 @@ class OptionScannerProcess(multiprocessing.Process):
 class OptionDirectorThread(threading.Thread):
 
     def __init__(self,
-        api,
         api_rate_cv,
         api_rate_avail,
         exit_flag
     ):
 
         threading.Thread.__init__(self)
-        self.api = api
         self.api_rate_cv = api_rate_cv
         self.api_rate_avail = api_rate_avail
         self.exit_flag = exit_flag

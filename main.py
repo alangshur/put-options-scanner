@@ -16,16 +16,14 @@ if __name__ == '__main__':
     # results = scanner.run()
     # print(results)
 
-    analyzer = CreditPutSpreadAnalyzer(
-        risk_free_rate=0.68
-    )
+    analyzer = CreditPutSpreadAnalyzer()
     scanner = OptionScanner(
-        uni_file='universe/active-equities.csv', 
+        uni_file='universe/active-symbols.csv', 
         analyzer=analyzer,
-        num_processes=os.cpu_count()
+        num_processes=6
     )
+
     results = scanner.run()
-    spreads = sum(results['results'].values(), [])
-    print('\n\n\nSpreads:\n')
-    for spread in spreads:
-        print(spread)
+    print('Fetching errors: {}'.format(results['fetch_failure_count']))
+    print('Analyzer errors: {}'.format(results['analyzer_failure_count']))
+    

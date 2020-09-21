@@ -1,22 +1,26 @@
+from py_vollib.black_scholes_merton.implied_volatility import implied_volatility
+from py_vollib.black_scholes_merton.greeks import analytical
 from src.analyzer.base import OptionAnalyzerBase
+import numpy.polynomial.polynomial as poly
 from datetime import datetime, date
 from itertools import permutations
-from scipy.interpolate import interp1d
-import mibian
+from numpy import warnings
+import numpy as np
 import time
+
 
 class CreditPutSpreadAnalyzer(OptionAnalyzerBase):
 
     def __init__(self,
-        risk_free_rate=1.0,
+        min_filtered_levels=5,
         option_price_floor=0.10,
-        open_interest_floor=10,
+        open_interest_floor=5,
         volume_floor=5,
         max_spread_width=20
     ):
 
         super().__init__()
-        self.risk_free_rate = risk_free_rate
+        self.min_filtered_levels = min_filtered_levels
         self.option_price_floor = option_price_floor
         self.open_interest_floor = open_interest_floor
         self.volume_floor = volume_floor
@@ -25,8 +29,10 @@ class CreditPutSpreadAnalyzer(OptionAnalyzerBase):
     def run(self, 
         symbol, 
         underlying,
+        dividend,
         expiration, 
-        chain
+        chain,
+        risk_free_rate
     ):
 
         # get dte
@@ -35,20 +41,19 @@ class CreditPutSpreadAnalyzer(OptionAnalyzerBase):
         dte = (exp_dt - now_dt).days
 
         # filter bad levels
-        filtered_levels = []
+        filt_chain = []
         for level in chain:
-            if level['option_type'] != 'put': continue
-            if underlying <= level['strike']: continue
-            if level['last'] is None or level['last'] <= self.option_price_floor: continue
-            if level['bid'] is None or level['bid'] <= self.option_price_floor: continue
-            if level['ask'] is None or level['ask'] <= self.option_price_floor: continue
-            if level['open_interest'] <= self.open_interest_floor: continue
-            if level['volume'] <= self.volume_floor: continue
-            filtered_levels.append(level)
+            if self.__filter_level(symbol, underlying, level):
+                filt_chain.append(level)
+
+        # load greeks/iv
+        greeks_lookup = self.__load_greeks(underlying, dividend, filt_chain, dte, risk_free_rate)
+        if len(greeks_lookup) < self.min_filtered_levels: return []
+        coefs = self.__build_delta_curve(greeks_lookup)
  
         # iterate over spreads
         spread_collection = []
-        for buy_level, sell_level in permutations(filtered_levels, 2):
+        for buy_level, sell_level in permutations(filt_chain, 2):
             if buy_level['strike'] >= sell_level['strike']: continue
 
             # calculate/filter p/l
@@ -56,46 +61,41 @@ class CreditPutSpreadAnalyzer(OptionAnalyzerBase):
             premium = sell_level['bid'] - buy_level['ask']
             max_loss = width - premium
             be = sell_level['strike'] - premium
+            risk_reward_ratio = premium / max_loss
             if width > self.max_spread_width: continue
             if be <= buy_level['strike']: continue
             if be >= sell_level['strike']: continue
-
-            # build pricing model
-            buy_greeks = self.__get_pricing_model(underlying, buy_level, dte)
-            sell_greeks = self.__get_pricing_model(underlying, sell_level, dte)
-
-            # calculate/filter r/r
-            risk_reward_ratio = premium / max_loss
             if risk_reward_ratio <= 0.0: continue
 
-            # interpolate b/e prob
-            prob_buy_itm = abs(buy_greeks['delta'])
-            prob_sell_itm = abs(sell_greeks['delta'])
-            prob_be_itm = self.__interpolate_dual_delta(
-                buy_level, sell_level, 
-                prob_buy_itm, prob_sell_itm, 
-                be
-            )
+            # fetch greeks
+            buy_greeks = greeks_lookup[buy_level['strike']]
+            sell_greeks = greeks_lookup[sell_level['strike']]
 
-            # calculated/filter profits (TODO: FIX AND BETTER INTERPOLATE BE PROFIT)
-            prob_full_profit = 1.0 - prob_sell_itm
-            prob_be_profit = 1.0 - prob_be_itm
-            adjusted_full_profit = prob_full_profit * premium + (1 - prob_full_profit) * -max_loss
-            adjusted_be_profit = prob_be_profit * premium + (1 - prob_be_profit) * -max_loss
-            if adjusted_full_profit <= 0.0: continue
-            if adjusted_be_profit <= 0.0: continue
+            # calculated/filter profits
+            prob_profit = 1.0 - abs(sell_greeks['delta'])
+            prob_be = 1.0 - abs(self.__interpolate_delta(be, coefs))
+            adjusted_profit = prob_profit * premium + (1 - prob_profit) * -max_loss
+            if adjusted_profit <= 0.0: continue
 
             # add valid spreads
-            spread_collection.append('{} {} +{}/-{}'.format(
-                symbol, expiration, buy_level['strike'], 
-                sell_level['strike']
-            ))
+            spread_collection.append([
+                '{} {} +{}/-{}'.format(symbol, expiration, buy_level['strike'], sell_level['strike']), # description
+                round(width, 2), # width
+                round(premium * 100, 2), # premium
+                round(max_loss * 100, 2), # max loss
+                round(be, 2), # break even
+                round(risk_reward_ratio, 2), # risk reward ratio
+                round(prob_profit, 2), # probability of profit
+                round(prob_be, 2), # probability of breakeven
+                round(adjusted_profit * 100, 2) # adjusted profit
+            ])
 
         return spread_collection
 
     def validate(self, 
         symbol=None, 
         underlying=None,
+        dividend=None,
         expiration=None, 
         chain=None
     ):
@@ -114,35 +114,62 @@ class CreditPutSpreadAnalyzer(OptionAnalyzerBase):
 
         else: return True
 
-    def __get_pricing_model(self, underlying, level, dte):
-        option_data = [underlying, level['strike'], self.risk_free_rate, dte]
-        bs = mibian.BS(option_data, putPrice=level['last'])
-        bs = mibian.BS(option_data, volatility=bs.impliedVolatility)
+    def __load_greeks(self, underlying, dividend, chain, dte, risk_free_rate):
+        greeks_lookup = {}
 
-        # map greeks
+        # load greeks for chain
+        for level in chain:
+            greeks = self.__calculate_greeks(underlying, dividend, level, dte, risk_free_rate)
+            greeks_lookup[level['strike']] = greeks
+
+        return greeks_lookup
+
+    def __calculate_greeks(self, underlying, dividend, level, dte, risk_free_rate):
+
+        # get BS components
+        price = level['last']
+        S = underlying
+        K = level['strike']
+        t = dte / 365.2422
+        r = risk_free_rate
+        q = dividend
+        flag = 'p'
+
+        # calculate IV
+        sigma = implied_volatility(price, S, K, t, r, q, flag)
+
+        # maplc greeks
         return {
-            'delta': bs.putDelta,
-            'dual_delta': bs.putDelta2,
-            'theta': bs.putTheta,
-            'vega': bs.vega,
-            'gamma': bs.gamma,
-            'rho': bs.putRho
+            'iv': sigma,
+            'delta': analytical.delta(flag, S, K, t, r, sigma, q),
+            'theta': analytical.theta(flag, S, K, t, r, sigma, q),
+            'vega': analytical.vega(flag, S, K, t, r, sigma, q),
+            'gamma': analytical.gamma(flag, S, K, t, r, sigma, q),
+            'rho': analytical.rho(flag, S, K, t, r, sigma, q)
         }
 
-    def __interpolate_dual_delta(self,
-        buy_level, 
-        sell_level, 
-        prob_buy_itm, 
-        prob_sell_itm,
-        be
-    ):
+    def __build_delta_curve(self, greeks_lookup):
+        fit_data = np.array([(k, v['delta']) for k, v in greeks_lookup.items()])
 
-        # approximate dual delta curve
-        func = interp1d(
-            x=[buy_level['strike'], sell_level['strike']], 
-            y=[prob_buy_itm, prob_sell_itm],
-            kind='linear'
-        )
+        # fit with dynamic order
+        order, coefs = 11, None
+        with warnings.catch_warnings():
+            warnings.filterwarnings('error')
+            while coefs is None:
+                try: coefs = poly.polyfit(fit_data[:, 0], fit_data[:, 1], order)
+                except np.polynomial.polyutils.RankWarning: order -= 1
+        return coefs
 
-        # fit b/e price
-        return func(be)
+    def __interpolate_delta(self, be, coefs):
+        return poly.polyval(be, coefs)
+
+    def __filter_level(self, symbol, underlying, level):
+        if level['option_type'] != 'put': return False # ignore put options
+        if underlying <= level['strike']: return False # ignore ATM/ITM options
+        if level['root_symbol'] != symbol: return False # ignore adjusted options
+        if level['last'] is None or level['last'] <= self.option_price_floor: return False # ignore low last price
+        if level['bid'] is None or level['bid'] <= self.option_price_floor: return False # ignore low bid price
+        if level['ask'] is None or level['ask'] <= self.option_price_floor: return False # ignore low ask price
+        if level['open_interest'] <= self.open_interest_floor: return False # ignore low open interest
+        if level['volume'] <= self.volume_floor: return False # ignore low volume
+        return True

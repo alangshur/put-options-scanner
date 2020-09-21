@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 load_dotenv(verbose=True)
 
 
-class PolygonAPI():
+class PolygonAPI:
 
     def fetch_last_quote(self, symbol):
         try:
@@ -22,6 +22,7 @@ class PolygonAPI():
             # send request
             r_data = requests.get(url, headers=headers)
             quote = r_data.json()['last']
+
         except: return None
 
         # format midprice
@@ -52,6 +53,7 @@ class PolygonAPI():
             # send request
             r_data = requests.get(url, headers=headers)
             quotes = r_data.json()['results']
+            
         except: return None
 
         # format quotes

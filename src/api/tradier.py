@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 load_dotenv(verbose=True)
 
 
-class TradierAPI():
+class TradierAPI:
 
     def fetch_chain(self, symbol, expiration, greeks=False):
         try:
