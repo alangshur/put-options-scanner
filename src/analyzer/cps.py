@@ -112,6 +112,13 @@ class CreditPutSpreadAnalyzer(OptionAnalyzerBase):
             if dte < 21 or dte > 91: return False
             else: return True
 
+        # filter symbols
+        elif symbol is not None:
+            
+            # ignore toronto exchange
+            if symbol.endswith('.TO'): return False
+            else: return True
+
         else: return True
 
     def __load_greeks(self, underlying, dividend, chain, dte, risk_free_rate):

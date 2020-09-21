@@ -12,6 +12,7 @@ import datetime
 import math
 import time
 import csv
+import os
 
 
 class OptionScanner:
@@ -20,13 +21,15 @@ class OptionScanner:
         uni_file, 
         analyzer,
         num_processes=10,
-        save_scan=True
+        save_scan=True,
+        log_changes=True
     ):
 
         self.uni_file = uni_file
         self.analyzer = analyzer
         self.num_processes = num_processes
         self.save_scan = save_scan
+        self.log_changes= log_changes
 
         # fetch universe
         f = open(self.uni_file, 'r')
@@ -119,12 +122,13 @@ class OptionScanner:
         pbar = tqdm(total=size)
 
         # build log file
-        Path('log').mkdir(exist_ok=True)
-        f = open('log/{}.log'.format(self.scan_name), 'w+')
+        if self.log_changes:
+            Path('log').mkdir(exist_ok=True)
+            f = open('log/{}.log'.format(self.scan_name), 'w+')
 
         # update prog bar
         while not symbol_queue.empty():
-            self.__flush_logs(f, log_queue)
+            if self.log_changes: self.__flush_logs(f, log_queue)
             new_size = symbol_queue.qsize()
             pbar.update(size - new_size)
             size = new_size
@@ -137,8 +141,9 @@ class OptionScanner:
         pbar.close()
 
         # flush logs
-        self.__flush_logs(f, log_queue)
-        f.close()
+        if self.log_changes:
+            self.__flush_logs(f, log_queue)
+            f.close()
 
     def __save_scan(self, scan):
         vals = sum(scan.values(), [])
@@ -152,6 +157,8 @@ class OptionScanner:
     def __flush_logs(self, f, log_queue):
         while not log_queue.empty():
             f.write(log_queue.get() + '\n')
+        f.flush()
+        os.fsync(f)
 
 
 class OptionScannerProcess(multiprocessing.Process):
