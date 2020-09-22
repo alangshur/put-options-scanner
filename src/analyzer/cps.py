@@ -59,24 +59,31 @@ class CreditPutSpreadAnalyzer(OptionAnalyzerBase):
             # calculate/filter p/l
             width = sell_level['strike'] - buy_level['strike']
             premium = sell_level['bid'] - buy_level['ask']
-            max_loss = width - premium
+            max_loss = premium - width
             be = sell_level['strike'] - premium
-            risk_reward_ratio = premium / max_loss
+            risk_reward_ratio = abs(premium / max_loss)
             if width > self.max_spread_width: continue
+            if premium <= 0.0: continue
             if be <= buy_level['strike']: continue
             if be >= sell_level['strike']: continue
-            if risk_reward_ratio <= 0.0: continue
 
             # fetch greeks
             buy_greeks = greeks_lookup[buy_level['strike']]
             sell_greeks = greeks_lookup[sell_level['strike']]
 
-            # calculated/filter profits
-            prob_profit = 1.0 - abs(sell_greeks['delta'])
-            prob_be = 1.0 - abs(self.__interpolate_delta(be, coefs))
-            adjusted_profit = prob_profit * premium + (1 - prob_profit) * -max_loss
-            if adjusted_profit <= 0.0: continue
+            # get probabilities
+            prob_max_loss = abs(buy_greeks['delta'])
+            prob_max_profit = 1 - abs(sell_greeks['delta'])
 
+            # calculated/filter expected profits
+            expected_spread_profit, total_spread_prob = self.__approximate_risk_adjusted_spread_profit(
+                width, premium, buy_level['strike'], sell_level['strike'], coefs, resolution=0.1)
+            expected_profit = prob_max_loss * max_loss
+            expected_profit += prob_max_profit * premium
+            expected_profit += expected_spread_profit
+            if expected_profit <= 0.0: continue
+            if abs(1.0 - (prob_max_loss + total_spread_prob + prob_max_profit)) >= 0.1: continue
+            
             # add valid spreads
             spread_collection.append([
                 '{} {} +{}/-{}'.format(symbol, expiration, buy_level['strike'], sell_level['strike']), # description
@@ -85,9 +92,9 @@ class CreditPutSpreadAnalyzer(OptionAnalyzerBase):
                 round(max_loss * 100, 2), # max loss
                 round(be, 2), # break even
                 round(risk_reward_ratio, 2), # risk reward ratio
-                round(prob_profit, 2), # probability of profit
-                round(prob_be, 2), # probability of breakeven
-                round(adjusted_profit * 100, 2) # adjusted profit
+                round(prob_max_loss, 2), # probability of max loss
+                round(prob_max_profit, 2), # probability of max profit
+                round(expected_profit * 100, 2) # risk-adjusted profit
             ])
 
         return spread_collection
@@ -163,12 +170,37 @@ class CreditPutSpreadAnalyzer(OptionAnalyzerBase):
         with warnings.catch_warnings():
             warnings.filterwarnings('error')
             while coefs is None:
-                try: coefs = poly.polyfit(fit_data[:, 0], fit_data[:, 1], order)
+                try: coefs = poly.polyfit(fit_data[:, 0], np.abs(fit_data[:, 1]), order)
                 except np.polynomial.polyutils.RankWarning: order -= 1
         return coefs
 
-    def __interpolate_delta(self, be, coefs):
-        return poly.polyval(be, coefs)
+    def __approximate_risk_adjusted_spread_profit(self, width, premium, buy_strike, 
+            sell_strike, coefs, resolution=0.1):
+
+        total_spread_prob = 0
+        expected_profit = 0
+        for i in range(int(width / resolution)):
+
+            # resolve price interval
+            lo = round(buy_strike + resolution * i, 2)
+            hi = round(lo + resolution, 2)
+            future_price = round((lo + hi) / 2, 2)
+            
+            # approximate interval probability
+            lo_delta = self.__interpolate_delta(lo, coefs)
+            hi_delta = self.__interpolate_delta(hi, coefs)
+            interval_prob = hi_delta - lo_delta
+            if interval_prob < 0: interval_prob = 0
+            
+            # calculate expected interval return
+            interval_return = (future_price - sell_strike) + premium
+            expected_profit += interval_prob * interval_return
+            total_spread_prob += interval_prob
+        
+        return expected_profit, total_spread_prob
+
+    def __interpolate_delta(self, price, coefs):
+        return poly.polyval(price, coefs)
 
     def __filter_level(self, symbol, underlying, level):
         if level['option_type'] != 'put': return False # ignore put options
