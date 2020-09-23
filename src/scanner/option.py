@@ -1,3 +1,4 @@
+from src.scanner.base import ScannerBase
 from src.util.atomic import AtomicBool
 from src.api.tradier import TradierAPI
 from src.api.polygon import PolygonAPI
@@ -15,33 +16,40 @@ import csv
 import os
 
 
-class OptionScanner:
+class OptionScanner(ScannerBase):
 
     def __init__(self, 
-        uni_file, 
         analyzer,
+        uni_list=None, 
+        uni_file=None,
         num_processes=10,
         save_scan=True,
         log_changes=True
     ):
 
-        self.uni_file = uni_file
         self.analyzer = analyzer
+        self.uni_list = uni_list
+        self.uni_file = uni_file
         self.num_processes = num_processes
         self.save_scan = save_scan
         self.log_changes= log_changes
 
         # fetch universe
-        f = open(self.uni_file, 'r')
-        uni_list = list(csv.reader(f))
-        self.uni = [row[0] for row in uni_list[1:]]        
-        f.close()
+        if self.uni_file is not None:
+            f = open(self.uni_file, 'r')
+            uni_list = list(csv.reader(f))
+            self.uni = [row[0] for row in uni_list[1:]]        
+            f.close()
+        elif self.uni_list is not None:
+            self.uni = self.uni_list
+        else:
+            raise Exception('No universe specified.')
 
         # build scan name
+        k = 'option'
         d = str(datetime.datetime.today()).split(' ')[0]
         t = str(datetime.datetime.today()).split(' ')[-1].split('.')[0]
-        u = self.uni_file.split('.')[0].split('/')[-1]
-        self.scan_name = '{}_{}_{}'.format(d, t, u)
+        self.scan_name = '{}_{}_{}'.format(k, d, t)
 
     def run(self):
 

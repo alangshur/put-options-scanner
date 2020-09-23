@@ -1,28 +1,46 @@
+from src.scanner.base import ScannerBase
 from src.api.polygon import PolygonAPI
 from queue import Queue, Empty
+from pathlib import Path
 import multiprocessing
 from tqdm import tqdm
 from time import sleep
+import datetime
 import csv
 
 
-class EquityScanner:
+class EquityScanner(ScannerBase):
 
     def __init__(self, 
-        uni_file, 
         analyzer,
-        num_processes=10
+        uni_list=None, 
+        uni_file=None,
+        num_processes=10,
+        save_scan=True
     ):
     
-        self.uni_file = uni_file
         self.analyzer = analyzer
+        self.uni_list = uni_list
+        self.uni_file = uni_file
         self.num_processes = num_processes
+        self.save_scan = save_scan
         
         # fetch universe
-        f = open(self.uni_file, 'r')
-        uni_list = list(csv.reader(f))
-        self.uni = [row[0] for row in uni_list[1:]]
-        f.close()
+        if self.uni_file is not None:
+            f = open(self.uni_file, 'r')
+            uni_list = list(csv.reader(f))
+            self.uni = [row[0] for row in uni_list[1:]]
+            f.close()
+        elif self.uni_list is not None:
+            self.uni = self.uni_list
+        else:
+            raise Exception('No universe specified.')
+            
+        # build scan name
+        k = 'equity'
+        d = str(datetime.datetime.today()).split(' ')[0]
+        t = str(datetime.datetime.today()).split(' ')[-1].split('.')[0]
+        self.scan_name = '{}_{}_{}'.format(k, d, t)
 
     def run(self):
 
@@ -59,6 +77,10 @@ class EquityScanner:
         # wait for processes
         for p in s_processes: p.join()
 
+        # save results
+        if self.save_scan:
+            self.__save_scan(result_map._getvalue())
+
         # return results
         return {
             'results': result_map._getvalue(),
@@ -80,6 +102,15 @@ class EquityScanner:
         # wait for queue
         queue.join()
         pbar.close()
+
+    def __save_scan(self, scan):
+        vals = [[k, v] for k, v in scan.items()]
+
+        # save file
+        Path('scan').mkdir(exist_ok=True)
+        f = open('scan/{}.csv'.format(self.scan_name), 'w+')
+        csv.writer(f, delimiter=',').writerows(vals)
+        f.close()
 
 
 class EquityScannerProcess(multiprocessing.Process):

@@ -9,30 +9,21 @@ class RegressionAnalyzer(EquityAnalyzerBase):
         super().__init__()
 
         # define day ranges
-        self.YEAR_DAYS = 250
-        self.HALF_YEAR_DAYS = 126
-        self.THREE_MONTH_DAYS = 63
-        self.MONTH_DAYS = 21
-        self.WEEK_DAYS = 5
+        self.ranges = [15, 45]
 
     def run(self, symbol, quotes):
-
-        # fit regression ranges
         quotes = np.array([q['close'] for q in quotes])
-        year_reg = self.__regress_range(quotes, self.YEAR_DAYS)
-        half_year_reg = self.__regress_range(quotes, self.HALF_YEAR_DAYS)
-        three_month_reg = self.__regress_range(quotes, self.THREE_MONTH_DAYS)
-        month_reg = self.__regress_range(quotes, self.MONTH_DAYS)
-        week_reg = self.__regress_range(quotes, self.WEEK_DAYS)
+        range_data = []
 
-        # calculate score
-        return {
-            'week': week_reg,
-            'month': month_reg,
-            'three_month': three_month_reg,
-            'half_year': half_year_reg,
-            'year': year_reg
-        }
+        # calculate regression scores
+        for r in self.ranges:
+            ret, score = self.__regress_range(quotes, r)
+            value = score ** (1 - ret)
+            range_data.append(value)
+
+        # verify ranges
+        range_data = np.array(range_data)
+        return range_data.mean()
 
     def validate(self, 
         symbol=None, 
@@ -41,20 +32,25 @@ class RegressionAnalyzer(EquityAnalyzerBase):
 
         # validate quotes length
         if quotes is not None: 
-            return len(quotes) >= self.YEAR_DAYS
+            return len(quotes) >= max(self.ranges)
         else: 
             return True
 
-    def __regress_range(self, quotes, end_range):
+    def __regress_range(self, quotes, end_range, max_ret=1.0):
          
         # get variables
         if end_range >= quotes.shape[0]: y = quotes
         else: y = quotes[quotes.shape[0] - end_range:]
         x = np.arange(y.shape[0]).reshape(-1, 1)
 
+        # get return
+        ret = (y[-1] - y[0]) / y[0]
+        if ret > max_ret: ret = max_ret
+        if ret < -max_ret: ret = -max_ret
+
         # fit regression
         reg = LinearRegression()
-        slope = reg.fit(x, y).coef_[0]
+        reg.fit(x, y).coef_[0]
         score = reg.score(x, y)
 
-        return slope, score
+        return ret, score
