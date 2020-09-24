@@ -22,7 +22,7 @@ class OptionScanner(ScannerBase):
         analyzer,
         uni_list=None, 
         uni_file=None,
-        num_processes=10,
+        num_processes=6,
         save_scan=True,
         log_changes=True
     ):

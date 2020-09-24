@@ -27,12 +27,12 @@ if __name__ == '__main__':
     # print('Fetching errors: {}'.format(results['fetch_failure_count']))
     # print('Analyzer errors: {}'.format(results['analyzer_failure_count']))
 
-
     # TODO:
     #   1. [DONE] add option to scanners to load list of symbols instead of file of symbols
     #   2. add same two features to cps rank engine
-    #   3. bolster equity scanner (simple route with two regressions) logic
-    #   4. add feature to equity scanner to pull symbol correlation with market index
+    #   3. [DONE] bolster equity scanner (simple route with two regressions) logic
+    #   4. [DONE] add feature to equity scanner to pull symbol correlation with market index
     #   5. [DONE] updgrade equity scanner to save scan results
+    #   6. [DONE] add logging to equity scanner
     
     

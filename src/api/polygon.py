@@ -53,6 +53,7 @@ class PolygonAPI:
             # send request
             r_data = requests.get(url, headers=headers)
             quotes = r_data.json()['results']
+            if quotes is None: return None
             
         except: return None
 
