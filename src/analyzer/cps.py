@@ -83,6 +83,12 @@ class CreditPutSpreadAnalyzer(OptionAnalyzerBase):
             expected_profit += expected_spread_profit
             if expected_profit <= 0.0: continue
             if abs(1.0 - (prob_max_loss + total_spread_prob + prob_max_profit)) >= 0.1: continue
+
+            # calulate net greeks
+            net_delta = buy_greeks['delta'] - sell_greeks['delta']
+            net_theta = buy_greeks['theta'] - sell_greeks['theta']
+            net_vega = buy_greeks['vega'] - sell_greeks['vega']
+            net_gamma = buy_greeks['gamma'] - sell_greeks['gamma']
             
             # add valid spreads
             spread_collection.append([
@@ -94,7 +100,11 @@ class CreditPutSpreadAnalyzer(OptionAnalyzerBase):
                 round(risk_reward_ratio, 2), # risk reward ratio
                 round(prob_max_loss, 2), # probability of max loss
                 round(prob_max_profit, 2), # probability of max profit
-                round(expected_profit * 100, 2) # risk-adjusted profit
+                round(expected_profit * 100, 2), # risk-adjusted profit
+                round(net_delta, 2), # position delta
+                round(net_theta, 2), # position theta
+                round(net_vega, 2), # position vega
+                round(net_gamma, 2) # position gamma
             ])
 
         return spread_collection
