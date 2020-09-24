@@ -47,9 +47,10 @@ class OptionScanner(ScannerBase):
 
         # build scan name
         k = 'option'
+        a = self.analyzer.get_name()
         d = str(datetime.datetime.today()).split(' ')[0]
         t = str(datetime.datetime.today()).split(' ')[-1].split('.')[0]
-        self.scan_name = '{}_{}_{}'.format(k, d, t)
+        self.scan_name = '{}_{}_{}_{}'.format(k, a, d, t)
 
     def run(self):
 

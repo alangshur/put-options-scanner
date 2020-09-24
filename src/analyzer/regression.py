@@ -11,7 +11,7 @@ class RegressionAnalyzer(EquityAnalyzerBase):
         index='SPY'
     ):
 
-        super().__init__()
+        super().__init__('reg')
         self.range = 30
 
         # fetch index
@@ -25,16 +25,17 @@ class RegressionAnalyzer(EquityAnalyzerBase):
 
         # calculate regression score
         ret, score = self.__regress_range(quotes, self.range)
-        if ret < 0.0: return 0.0
+        if ret < 0.0: score = 0.0
 
         # calculate correlation
         symbol_rets = self.__convert_price_to_return(quotes)
         min_history = min(symbol_rets.shape[0], self.index_rets.shape[0])
         corr_coef = pearsonr(symbol_rets[-min_history:], self.index_rets[-min_history:])[0]
         
-        # verify ranges
-        range_data = np.array(range_data)
-        return (round(score, 3), round(corr_coef, 3))
+        return (
+            round(score, 3), # regression score
+            round(corr_coef, 3) # market correlation
+        )
 
     def validate(self, 
         symbol=None, 
@@ -43,7 +44,7 @@ class RegressionAnalyzer(EquityAnalyzerBase):
 
         # validate quotes length
         if quotes is not None: 
-            return len(quotes) >= max(self.ranges)
+            return len(quotes) >= self.range
         else: 
             return True
 

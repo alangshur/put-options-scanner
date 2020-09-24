@@ -19,7 +19,7 @@ class CreditPutSpreadAnalyzer(OptionAnalyzerBase):
         max_spread_width=20
     ):
 
-        super().__init__()
+        super().__init__('cps')
         self.min_filtered_levels = min_filtered_levels
         self.option_price_floor = option_price_floor
         self.open_interest_floor = open_interest_floor

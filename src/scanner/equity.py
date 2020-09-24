@@ -32,7 +32,7 @@ class EquityScanner(ScannerBase):
         if self.uni_file is not None:
             f = open(self.uni_file, 'r')
             uni_list = list(csv.reader(f))
-            self.uni = [row[0] for row in uni_list[1:]]
+            self.uni = [row[0] for row in uni_list[0:]]
             f.close()
         elif self.uni_list is not None:
             self.uni = self.uni_list
@@ -41,9 +41,10 @@ class EquityScanner(ScannerBase):
             
         # build scan name
         k = 'equity'
+        a = self.analyzer.get_name()
         d = str(datetime.datetime.today()).split(' ')[0]
         t = str(datetime.datetime.today()).split(' ')[-1].split('.')[0]
-        self.scan_name = '{}_{}_{}'.format(k, d, t)
+        self.scan_name = '{}_{}_{}_{}'.format(k, a, d, t)
 
     def run(self):
 
