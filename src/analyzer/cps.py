@@ -1,6 +1,6 @@
 from py_vollib.black_scholes_merton.implied_volatility import implied_volatility
 from py_vollib.black_scholes_merton.greeks import analytical
-from src.analyzer.base import OptionAnalyzerBase
+from src.analyzer.base import AnalyzerBase
 import numpy.polynomial.polynomial as poly
 from datetime import datetime, date
 from itertools import permutations
@@ -9,7 +9,7 @@ import numpy as np
 import time
 
 
-class CreditPutSpreadAnalyzer(OptionAnalyzerBase):
+class CreditPutSpreadAnalyzer(AnalyzerBase):
 
     def __init__(self,
         min_filtered_levels=5,
@@ -154,7 +154,7 @@ class CreditPutSpreadAnalyzer(OptionAnalyzerBase):
         price = level['last']
         S = underlying
         K = level['strike']
-        t = dte / 365.2422
+        t = dte / 365.0
         r = risk_free_rate
         q = dividend
         flag = 'p'

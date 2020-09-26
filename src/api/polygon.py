@@ -37,8 +37,9 @@ class PolygonAPI:
 
             # get date range
             now = datetime.now()
-            now_str = now.strftime('%Y-%m-%d')
             then = now - relativedelta(years=1)
+            now += relativedelta(days=1)
+            now_str = now.strftime('%Y-%m-%d')
             then_str = then.strftime('%Y-%m-%d')
 
             # format request

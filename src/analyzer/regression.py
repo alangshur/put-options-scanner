@@ -1,40 +1,48 @@
 from sklearn.linear_model import LinearRegression
-from src.analyzer.base import EquityAnalyzerBase
+from src.analyzer.base import AnalyzerBase
 from src.api.polygon import PolygonAPI
 from scipy.stats import pearsonr
 import numpy as np
 
 
-class RegressionAnalyzer(EquityAnalyzerBase):
+class RegressionAnalyzer(AnalyzerBase):
 
-    def __init__(self, 
-        index='SPY'
+    def __init__(self,
+        index='SPY',
+        regression_range=30,
+        volatility_period=30
     ):
 
         super().__init__('reg')
-        self.range = 30
+        self.index = index
+        self.regression_range = regression_range
+        self.volatility_period = volatility_period
 
         # fetch index
-        index_quotes = PolygonAPI().fetch_year_quotes(index)
-        if index_quotes is None: raise Exception('Failed to fetch index data.')
-        index_quotes = np.array([q['close'] for q in index_quotes])
-        self.index_rets = self.__convert_price_to_return(index_quotes)
+        self.index_quotes = PolygonAPI().fetch_year_quotes(self.index)
+        if self.index_quotes is None: raise Exception('Failed to fetch index data.')
+        self.index_rets = self.__convert_price_to_return(
+            np.array([q['close'] for q in self.index_quotes])
+        )
 
     def run(self, symbol, quotes):
         quotes = np.array([q['close'] for q in quotes])
 
         # calculate regression score
-        ret, score = self.__regress_range(quotes, self.range)
-        if ret < 0.0: score = 0.0
+        ret, score = self.__regress_range(quotes, self.regression_range)
 
         # calculate correlation
         symbol_rets = self.__convert_price_to_return(quotes)
-        min_history = min(symbol_rets.shape[0], self.index_rets.shape[0])
-        corr_coef = pearsonr(symbol_rets[-min_history:], self.index_rets[-min_history:])[0]
+        corr_coef = pearsonr(symbol_rets, self.index_rets)[0]
+
+        # calculate hvp
+        hv_percentile = self.__calc_hv_percentile(symbol_rets)
         
         return (
-            round(score, 3), # regression score
-            round(corr_coef, 3) # market correlation
+            round(ret, 3), # period return over regression range
+            round(score, 3), # regression score over regression range
+            round(corr_coef, 3), # current annual market correlation
+            round(hv_percentile, 3) # current historical volatility percentile
         )
 
     def validate(self, 
@@ -44,7 +52,7 @@ class RegressionAnalyzer(EquityAnalyzerBase):
 
         # validate quotes length
         if quotes is not None: 
-            return len(quotes) >= self.range
+            return len(quotes) == len(self.index_quotes)
         else: 
             return True
 
@@ -78,3 +86,17 @@ class RegressionAnalyzer(EquityAnalyzerBase):
             last_quote = quote
 
         return np.array(rets)
+
+    def __calc_hv_percentile(self, symbol_rets):
+        ret_history = symbol_rets.shape[0]
+        volatilities = []
+
+        # calculate vols over moving period
+        for i in range(ret_history - self.volatility_period):
+            window = symbol_rets[i:i + self.volatility_period]
+            annualized_vol = np.std(window) * np.sqrt(ret_history)
+            volatilities.append(annualized_vol)
+        
+        # calculate percentile
+        return volatilities[-1]
+        

@@ -16,7 +16,7 @@ import csv
 import os
 
 
-class OptionScanner(ScannerBase):
+class OptionChainScanner(ScannerBase):
 
     def __init__(self, 
         analyzer,
@@ -81,7 +81,7 @@ class OptionScanner(ScannerBase):
         # run scanner threads
         s_processes = []
         for i in range(self.num_processes):
-            s_process = OptionScannerProcess(
+            s_process = OptionChainScannerProcess(
                 process_num=i + 1, 
                 analyzer=self.analyzer,
                 option_api=option_api, 
@@ -170,7 +170,7 @@ class OptionScanner(ScannerBase):
         os.fsync(f)
 
 
-class OptionScannerProcess(multiprocessing.Process):
+class OptionChainScannerProcess(multiprocessing.Process):
 
     def __init__(self, 
         process_num, 

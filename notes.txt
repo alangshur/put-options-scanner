@@ -26,7 +26,11 @@ ML Algorithms:
         - Closing
 
 
-
 Building neutral portfolio:
     - Deltra neutral to market: hedge market movement
     - Volatility neutral to market: hedge market volatility
+
+
+Wheel Strategy:
+    - Find indices with high IV percentile / low HV percentile
+    - Find vhigh olatility skew 
