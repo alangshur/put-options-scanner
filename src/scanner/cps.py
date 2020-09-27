@@ -1,25 +1,30 @@
+from py_vollib.black_scholes_merton.implied_volatility import implied_volatility
+from py_vollib.black_scholes_merton.greeks import analytical
+import numpy.polynomial.polynomial as poly
 from src.scanner.base import ScannerBase
 from src.util.atomic import AtomicBool
 from src.api.tradier import TradierAPI
 from src.api.polygon import PolygonAPI
 from src.api.yfinance import YFinanceAPI
 from src.api.ycharts import YChartsAPI
+from datetime import datetime, date
+from itertools import permutations
 from queue import Queue, Empty
+from numpy import warnings
 from pathlib import Path
 import multiprocessing
 from tqdm import tqdm
+import numpy as np
 import threading
-import datetime
 import math
 import time
 import csv
 import os
 
 
-class OptionChainScanner(ScannerBase):
+class OptionCreditPutSpreadScanner(ScannerBase):
 
     def __init__(self, 
-        analyzer,
         uni_list=None, 
         uni_file=None,
         num_processes=6,
@@ -27,12 +32,11 @@ class OptionChainScanner(ScannerBase):
         log_changes=True
     ):
 
-        self.analyzer = analyzer
         self.uni_list = uni_list
         self.uni_file = uni_file
         self.num_processes = num_processes
         self.save_scan = save_scan
-        self.log_changes= log_changes
+        self.log_changes = log_changes
 
         # fetch universe
         if self.uni_file is not None:
@@ -46,11 +50,10 @@ class OptionChainScanner(ScannerBase):
             raise Exception('No universe specified.')
 
         # build scan name
-        k = 'option'
-        a = self.analyzer.get_name()
-        d = str(datetime.datetime.today()).split(' ')[0]
-        t = str(datetime.datetime.today()).split(' ')[-1].split('.')[0]
-        self.scan_name = '{}_{}_{}_{}'.format(k, a, d, t)
+        k = 'cps'
+        d = str(datetime.today()).split(' ')[0]
+        t = str(datetime.today()).split(' ')[-1].split('.')[0]
+        self.scan_name = '{}_{}_{}'.format(k, d, t)
 
     def run(self):
 
@@ -68,7 +71,7 @@ class OptionChainScanner(ScannerBase):
 
         # build meta resources
         fetch_failure_counter = manager.Value('i', 0)
-        analyzer_failure_counter = manager.Value('i', 0)
+        analysis_failure_counter = manager.Value('i', 0)
         log_queue = manager.Queue()
 
         # fetch risk-free rate
@@ -83,7 +86,6 @@ class OptionChainScanner(ScannerBase):
         for i in range(self.num_processes):
             s_process = OptionChainScannerProcess(
                 process_num=i + 1, 
-                analyzer=self.analyzer,
                 option_api=option_api, 
                 stock_api=stock_api,
                 dividend_api=dividend_api,
@@ -92,7 +94,7 @@ class OptionChainScanner(ScannerBase):
                 api_rate_avail=api_rate_avail,
                 result_map=result_map,
                 fetch_failure_counter=fetch_failure_counter,
-                analyzer_failure_counter=analyzer_failure_counter,
+                analysis_failure_counter=analysis_failure_counter,
                 log_queue=log_queue,
                 risk_free_rate=risk_free_rate
             )
@@ -109,12 +111,8 @@ class OptionChainScanner(ScannerBase):
         d_thread.start()
 
         # run progress bar
-        self.__run_progress_bar(symbol_queue, log_queue)
-
-        # wait for threads
-        for p in s_processes: p.join()
-        director_exit_flag.update(True)
-        d_thread.join()
+        self.__run_progress_bar(symbol_queue, log_queue, s_processes, 
+            d_thread, director_exit_flag)
 
         # save results
         if self.save_scan:
@@ -123,10 +121,12 @@ class OptionChainScanner(ScannerBase):
         return {
             'results': result_map._getvalue(),
             'fetch_failure_count': fetch_failure_counter.value,
-            'analyzer_failure_count': analyzer_failure_counter.value
+            'analysis_failure_count': analysis_failure_counter.value
         }
 
-    def __run_progress_bar(self, symbol_queue, log_queue):
+    def __run_progress_bar(self, symbol_queue, log_queue, s_processes, 
+        d_thread, director_exit_flag):
+
         size = symbol_queue.qsize()
         pbar = tqdm(total=size)
 
@@ -148,6 +148,11 @@ class OptionChainScanner(ScannerBase):
         # wait for queue
         symbol_queue.join()
         pbar.close()
+
+        # wait for threads
+        for p in s_processes: p.join()
+        director_exit_flag.update(True)
+        d_thread.join()
 
         # flush logs
         if self.log_changes:
@@ -174,7 +179,6 @@ class OptionChainScannerProcess(multiprocessing.Process):
 
     def __init__(self, 
         process_num, 
-        analyzer,
         option_api,
         stock_api,
         dividend_api,
@@ -183,15 +187,19 @@ class OptionChainScannerProcess(multiprocessing.Process):
         api_rate_avail,
         result_map,
         fetch_failure_counter,
-        analyzer_failure_counter,
+        analysis_failure_counter,
         risk_free_rate,
         log_queue,
-        max_fetch_attempts=5
+        max_fetch_attempts=5,
+        min_filtered_levels=5,
+        option_price_floor=0.10,
+        open_interest_floor=5,
+        volume_floor=5,
+        max_spread_width=20
     ):
 
         multiprocessing.Process.__init__(self)
         self.process_num = process_num
-        self.analyzer = analyzer
         self.option_api = option_api
         self.stock_api = stock_api
         self.dividend_api = dividend_api
@@ -200,11 +208,16 @@ class OptionChainScannerProcess(multiprocessing.Process):
         self.api_rate_avail = api_rate_avail
         self.result_map = result_map
         self.fetch_failure_counter = fetch_failure_counter
-        self.analyzer_failure_counter = analyzer_failure_counter
+        self.analysis_failure_counter = analysis_failure_counter
         self.risk_free_rate = risk_free_rate
         self.log_queue=log_queue
 
         self.max_fetch_attempts = max_fetch_attempts
+        self.min_filtered_levels = min_filtered_levels
+        self.option_price_floor = option_price_floor
+        self.open_interest_floor = open_interest_floor
+        self.volume_floor = volume_floor
+        self.max_spread_width = max_spread_width
         self.process_name = self.__class__.__name__ + str(self.process_num)
 
     def run(self):
@@ -221,21 +234,15 @@ class OptionChainScannerProcess(multiprocessing.Process):
 
     def __execute_task(self, symbol):
 
-        # validate symbol
-        if not self.analyzer.validate(symbol=symbol): return
-
-        # fetch/validate underlying
+        # fetch underlying
+        if not self.__validate_symbol(symbol): return
         underlying = self.__fetch_underlying(symbol)
         if underlying is None:
             self.__report_fetch_failure('underlying', (symbol,))
             return
-        if not self.analyzer.validate(underlying=underlying): return
 
-        # fetch/validate dividend yield
+        # fetch dividend/expiration
         dividend = self.dividend_api.fetch_annual_yield(symbol)
-        if not self.analyzer.validate(dividend=dividend): return
-        
-        # fetch expirations
         expirations = self.__fetch_expirations(symbol)
         if expirations is None:
             self.__report_fetch_failure('expirations', (symbol,))
@@ -243,18 +250,17 @@ class OptionChainScannerProcess(multiprocessing.Process):
 
         # iterate/validate expirations
         for expiration in expirations:
-            if not self.analyzer.validate(expiration=expiration): continue
-            
-            # fetch/validate chains
+
+            # fetch chains
+            if not self.__validate_expiration(expiration): continue
             chain = self.__fetch_chain(symbol, expiration)
             if chain is None: 
                 self.__report_fetch_failure('chain', (symbol, expiration))
                 continue
-            if not self.analyzer.validate(chain=chain): continue
 
-            # run analyzer
+            # run analysis
             try:
-                self.result_map[(symbol, expiration)] = self.analyzer.run(
+                self.result_map[(symbol, expiration)] = self.__analyze_chain(
                     symbol=symbol, 
                     underlying=underlying, 
                     dividend=dividend, 
@@ -263,9 +269,26 @@ class OptionChainScannerProcess(multiprocessing.Process):
                     risk_free_rate=self.risk_free_rate
                 )
             except Exception as e:
-                self.__report_analyzer_failure((symbol, expiration), str(e))
+                self.__report_analysis_failure((symbol, expiration), str(e))
 
         return True
+
+    def __validate_symbol(self, symbol):
+
+        # ignore toronto exchange
+        if symbol.endswith('.TO'): return False
+        else: return True
+
+    def __validate_expiration(self, expiration):
+
+        # get dte
+        now_dt = date.today()
+        exp_dt = datetime.strptime(expiration, '%Y-%m-%d').date()
+        dte = (exp_dt - now_dt).days
+
+        # target dte range
+        if dte < 21 or dte > 91: return False
+        else: return True
     
     def __fetch_expirations(self, symbol):
         expirations = None
@@ -327,16 +350,184 @@ class OptionChainScannerProcess(multiprocessing.Process):
         self.fetch_failure_counter.value += 1
         self.__log_message('ERROR', '{} fetch failed for {}'.format(component, fetch_data))
 
-    def __report_analyzer_failure(self, analyzer_data, error_msg):
-        self.analyzer_failure_counter.value += 1
-        self.__log_message('ERROR', 'analyzer failed for {} with error \"{}\"'.format(analyzer_data, error_msg))
+    def __report_analysis_failure(self, analysis_data, error_msg):
+        self.analysis_failure_counter.value += 1
+        self.__log_message('ERROR', 'analysis failed for {} with error \"{}\"'.format(analysis_data, error_msg))
 
     def __log_message(self, tag, msg):
-        log = str(datetime.datetime.today())
+        log = str(datetime.today())
         log += ' ' + tag
         log += ' [' + self.process_name + ']'
         log += ': ' + msg
         self.log_queue.put(log)
+
+    def __analyze_chain(self, 
+        symbol, 
+        underlying,
+        dividend,
+        expiration, 
+        chain,
+        risk_free_rate
+    ):
+
+        # get dte
+        now_dt = date.today()
+        exp_dt = datetime.strptime(expiration, '%Y-%m-%d').date()
+        dte = (exp_dt - now_dt).days
+
+        # filter bad levels
+        filt_chain = []
+        for level in chain:
+            if self.__filter_level(symbol, underlying, level):
+                filt_chain.append(level)
+
+        # load greeks/iv
+        greeks_lookup = self.__load_greeks(underlying, dividend, filt_chain, dte, risk_free_rate)
+        if len(greeks_lookup) < self.min_filtered_levels: return []
+        coefs = self.__build_delta_curve(greeks_lookup)
+ 
+        # iterate over spreads
+        spread_collection = []
+        for buy_level, sell_level in permutations(filt_chain, 2):
+            if buy_level['strike'] >= sell_level['strike']: continue
+
+            # calculate/filter p/l
+            width = sell_level['strike'] - buy_level['strike']
+            premium = sell_level['bid'] - buy_level['ask']
+            max_loss = premium - width
+            be = sell_level['strike'] - premium
+            risk_reward_ratio = abs(premium / max_loss)
+            if width > self.max_spread_width: continue
+            if premium <= 0.0: continue
+            if be <= buy_level['strike']: continue
+            if be >= sell_level['strike']: continue
+
+            # fetch greeks
+            buy_greeks = greeks_lookup[buy_level['strike']]
+            sell_greeks = greeks_lookup[sell_level['strike']]
+
+            # get probabilities
+            prob_max_loss = abs(buy_greeks['delta'])
+            prob_max_profit = 1 - abs(sell_greeks['delta'])
+
+            # calculated/filter expected profits
+            expected_spread_profit, total_spread_prob = self.__approximate_risk_adjusted_spread_profit(
+                width, premium, buy_level['strike'], sell_level['strike'], coefs, resolution=0.1)
+            expected_profit = prob_max_loss * max_loss
+            expected_profit += prob_max_profit * premium
+            expected_profit += expected_spread_profit
+            if expected_profit <= 0.0: continue
+            if abs(1.0 - (prob_max_loss + total_spread_prob + prob_max_profit)) >= 0.1: continue
+
+            # calulate net greeks
+            net_delta = buy_greeks['delta'] - sell_greeks['delta']
+            net_theta = buy_greeks['theta'] - sell_greeks['theta']
+            net_vega = buy_greeks['vega'] - sell_greeks['vega']
+            net_gamma = buy_greeks['gamma'] - sell_greeks['gamma']
+            
+            # add valid spreads
+            spread_collection.append([
+                '{} {} +{}/-{}'.format(symbol, expiration, buy_level['strike'], sell_level['strike']), # description
+                round(width, 2), # width
+                round(premium * 100, 2), # premium
+                round(max_loss * 100, 2), # max loss
+                round(be, 2), # break even
+                round(risk_reward_ratio, 2), # risk reward ratio
+                round(prob_max_loss, 2), # probability of max loss
+                round(prob_max_profit, 2), # probability of max profit
+                round(expected_profit * 100, 2), # risk-adjusted profit
+                round(net_delta, 2), # position delta
+                round(net_theta, 2), # position theta
+                round(net_vega, 2), # position vega
+                round(net_gamma, 2) # position gamma
+            ])
+
+        return spread_collection
+    
+    def __load_greeks(self, underlying, dividend, chain, dte, risk_free_rate):
+        greeks_lookup = {}
+
+        # load greeks for chain
+        for level in chain:
+            greeks = self.__calculate_greeks(underlying, dividend, level, dte, risk_free_rate)
+            greeks_lookup[level['strike']] = greeks
+
+        return greeks_lookup
+
+    def __calculate_greeks(self, underlying, dividend, level, dte, risk_free_rate):
+
+        # get BS components
+        price = level['last']
+        S = underlying
+        K = level['strike']
+        t = dte / 365.0
+        r = risk_free_rate
+        q = dividend
+        flag = 'p'
+
+        # calculate IV
+        sigma = implied_volatility(price, S, K, t, r, q, flag)
+
+        # maplc greeks
+        return {
+            'iv': sigma,
+            'delta': analytical.delta(flag, S, K, t, r, sigma, q),
+            'theta': analytical.theta(flag, S, K, t, r, sigma, q),
+            'vega': analytical.vega(flag, S, K, t, r, sigma, q),
+            'gamma': analytical.gamma(flag, S, K, t, r, sigma, q),
+            'rho': analytical.rho(flag, S, K, t, r, sigma, q)
+        }
+
+    def __build_delta_curve(self, greeks_lookup):
+        fit_data = np.array([(k, v['delta']) for k, v in greeks_lookup.items()])
+
+        # fit with dynamic order
+        order, coefs = 11, None
+        with warnings.catch_warnings():
+            warnings.filterwarnings('error')
+            while coefs is None:
+                try: coefs = poly.polyfit(fit_data[:, 0], np.abs(fit_data[:, 1]), order)
+                except np.polynomial.polyutils.RankWarning: order -= 1
+        return coefs
+
+    def __approximate_risk_adjusted_spread_profit(self, width, premium, buy_strike, 
+            sell_strike, coefs, resolution=0.1):
+
+        total_spread_prob = 0
+        expected_profit = 0
+        for i in range(int(width / resolution)):
+
+            # resolve price interval
+            lo = round(buy_strike + resolution * i, 2)
+            hi = round(lo + resolution, 2)
+            future_price = round((lo + hi) / 2, 2)
+            
+            # approximate interval probability
+            lo_delta = self.__interpolate_delta(lo, coefs)
+            hi_delta = self.__interpolate_delta(hi, coefs)
+            interval_prob = hi_delta - lo_delta
+            if interval_prob < 0: interval_prob = 0
+            
+            # calculate expected interval return
+            interval_return = (future_price - sell_strike) + premium
+            expected_profit += interval_prob * interval_return
+            total_spread_prob += interval_prob
+        
+        return expected_profit, total_spread_prob
+
+    def __interpolate_delta(self, price, coefs):
+        return poly.polyval(price, coefs)
+
+    def __filter_level(self, symbol, underlying, level):
+        if level['option_type'] != 'put': return False # ignore put options
+        if underlying <= level['strike']: return False # ignore ATM/ITM options
+        if level['root_symbol'] != symbol: return False # ignore adjusted options
+        if level['last'] is None or level['last'] <= self.option_price_floor: return False # ignore low last price
+        if level['bid'] is None or level['bid'] <= self.option_price_floor: return False # ignore low bid price
+        if level['ask'] is None or level['ask'] <= self.option_price_floor: return False # ignore low ask price
+        if level['open_interest'] <= self.open_interest_floor: return False # ignore low open interest
+        if level['volume'] <= self.volume_floor: return False # ignore low volume
+        return True
 
 
 class OptionDirectorThread(threading.Thread):
@@ -389,7 +580,7 @@ class OptionDirectorThread(threading.Thread):
             self.api_rate_cv.notify(n=1)
 
     def __log_message(self, tag, msg):
-        log = str(datetime.datetime.today())
+        log = str(datetime.today())
         log += ' ' + tag
         log += ' [' + self.thread_name + ']'
         log += ': ' + msg
