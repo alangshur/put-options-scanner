@@ -6,7 +6,7 @@ load_dotenv(verbose=True)
 
 class TradierAPI:
 
-    def fetch_chain(self, symbol, expiration, greeks=False):
+    def fetch_chain(self, symbol, expiration, greeks=True):
         try:
 
             # correct symbol

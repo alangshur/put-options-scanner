@@ -10,6 +10,7 @@ import numpy as np
 import datetime
 import time
 import csv
+import sys
 import os
 
 
@@ -85,7 +86,6 @@ class EquityHistoryScanner(ScannerBase):
         if self.save_scan:
             self.__save_scan(result_map._getvalue())
 
-        # return results
         return {
             'results': result_map._getvalue(),
             'fetch_failure_count': fetch_failure_counter.value,
@@ -227,11 +227,14 @@ class EquityScannerProcess(multiprocessing.Process):
 
     def __report_fetch_failure(self, component, fetch_data):
         self.fetch_failure_counter.value += 1
-        self.__log_message('ERROR', '{} fetch failed for {}'.format(component, fetch_data))
+        self.__log_message('ERROR', '{} fetch failed for {}'.format(
+            component, fetch_data))
 
     def __report_analysis_failure(self, analysis_data, error_msg):
+        line_no = sys.exc_info()[-1].tb_lineno
         self.analysis_failure_counter.value += 1
-        self.__log_message('ERROR', 'analysis failed for {} with error \"{}\"'.format(analysis_data, error_msg))
+        self.__log_message('ERROR', 'analysis failed for {} with error \"{}\" at line {}'.format(
+            analysis_data, error_msg, line_no))
 
     def __log_message(self, tag, msg):
         log = str(datetime.datetime.today())
