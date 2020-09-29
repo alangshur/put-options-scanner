@@ -12,10 +12,10 @@ if __name__ == '__main__':
     # scanner = OptionCreditPutSpreadScanner(
     #     uni_file='universe/test-symbols.csv', 
     #     num_processes=6
-    # )
+    # 
 
     scanner = WheelScanner(
-        uni_file='universe/test-symbols.csv', 
+        uni_file='universe/active-etfs.csv', 
         num_processes=6
     )
 

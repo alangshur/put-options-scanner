@@ -95,3 +95,7 @@ class YFinanceAPI:
         f = open('cache/yfinance.json', 'w+')
         json.dump(self.cache._getvalue(), f)
         f.close()
+
+        # remove empty cache
+        if len(self.cache) == 0:
+            Path('cache/yfinance.json').unlink()

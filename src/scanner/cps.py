@@ -42,7 +42,7 @@ class OptionCreditPutSpreadScanner(ScannerBase):
         if self.uni_file is not None:
             f = open(self.uni_file, 'r')
             uni_list = list(csv.reader(f))
-            self.uni = [row[0] for row in uni_list[1:]]        
+            self.uni = [row[0] for row in uni_list]        
             f.close()
         elif self.uni_list is not None:
             self.uni = self.uni_list

@@ -70,3 +70,7 @@ class YChartsAPI:
         f = open('cache/ycharts.json', 'w+')
         json.dump(self.cache, f)
         f.close()
+
+        # remove empty cache
+        if len(self.cache) == 0:
+            Path('cache/ycharts.json').unlink()

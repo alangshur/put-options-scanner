@@ -48,7 +48,7 @@ class WheelScanner(ScannerBase):
         if self.uni_file is not None:
             f = open(self.uni_file, 'r')
             uni_list = list(csv.reader(f))
-            self.uni = [row[0] for row in uni_list[1:]]        
+            self.uni = [row[0] for row in uni_list]        
             f.close()
         elif self.uni_list is not None:
             self.uni = self.uni_list
@@ -206,7 +206,6 @@ class WheelScannerWorkerProcess(multiprocessing.Process):
         option_price_floor=0.10,
         open_interest_floor=5,
         volume_floor=5,
-        min_contract_score=1.0,
         index='SPY',
         regression_range=30,
         volatility_period=30
@@ -232,7 +231,6 @@ class WheelScannerWorkerProcess(multiprocessing.Process):
         self.option_price_floor = option_price_floor
         self.open_interest_floor = open_interest_floor
         self.volume_floor = volume_floor
-        self.min_contract_score = min_contract_score
         self.index = index
         self.regression_range = regression_range
         self.volatility_period = volatility_period
@@ -243,7 +241,7 @@ class WheelScannerWorkerProcess(multiprocessing.Process):
         self.complete_symbols = {}
 
         # iteratively execute tasks
-        if self.__fetch_index(): 
+        if self.__fetch_index():
             while True:
                 try: symbol = self.symbol_queue.get(block=False)
                 except Empty: break
@@ -265,7 +263,7 @@ class WheelScannerWorkerProcess(multiprocessing.Process):
         if self.manual_greeks: 
             dividend = self.dividend_api.fetch_annual_yield(symbol)
         else: dividend = 0.0
-
+        
         # fetch quotes
         quotes = self.__fetch_quotes(symbol)
         if quotes is None: 
@@ -293,7 +291,7 @@ class WheelScannerWorkerProcess(multiprocessing.Process):
             try:
 
                 # analyze options chain
-                contracts, atm_iv = self.__analyze_chain(
+                contracts, atm_iv, be = self.__analyze_chain(
                     symbol=symbol, 
                     underlying=underlying, 
                     dividend=dividend, 
@@ -307,7 +305,8 @@ class WheelScannerWorkerProcess(multiprocessing.Process):
                 quotes_data = self.__analyze_quotes(
                     symbol=symbol,
                     quotes=quotes,
-                    atm_iv=atm_iv
+                    atm_iv=atm_iv,
+                    be=be
                 )
 
                 # compile analysis data
@@ -333,7 +332,7 @@ class WheelScannerWorkerProcess(multiprocessing.Process):
         dte = (exp_dt - now_dt).days
 
         # target dte range
-        if dte <= 35 or dte >= 70: return False
+        if dte <= 35 or dte >= 60: return False
         else: return True
 
     def __validate_quotes(self, quotes):
@@ -443,7 +442,8 @@ class WheelScannerWorkerProcess(multiprocessing.Process):
     def __analyze_quotes(self,
         symbol,
         quotes,
-        atm_iv
+        atm_iv,
+        be
     ):
 
         # calculate reg & corr & vol scores
@@ -453,13 +453,14 @@ class WheelScannerWorkerProcess(multiprocessing.Process):
             symbol_rets = self.__convert_price_to_return(quotes)
             corr = pearsonr(symbol_rets, self.index_rets)[0]
             vols, curr_vol = self.__calc_vol_windows(symbol_rets)
-            self.complete_symbols[symbol] = (ret, score, corr, vols, curr_vol)
+            self.complete_symbols[symbol] = (quotes, ret, score, corr, vols, curr_vol)
         else:
-            ret, score, corr, vols, curr_vol = self.complete_symbols[symbol]
+            quotes, ret, score, corr, vols, curr_vol = self.complete_symbols[symbol]
             
-        # calculate vol percentiles
-        hv_percentile = (vols < curr_vol).sum() / (vols.shape[0])
-        iv_percentile = (vols < atm_iv).sum() / (vols.shape[0])
+        # calculate vol/be percentiles
+        hv_percentile = (vols < curr_vol).sum() / vols.shape[0]
+        iv_percentile = (vols < atm_iv).sum() / vols.shape[0]
+        above_be_percentile = (quotes >= be).sum() / quotes.shape[0]
 
         return [
             round(ret, 5), # period return over regression range
@@ -467,7 +468,8 @@ class WheelScannerWorkerProcess(multiprocessing.Process):
             round(corr, 5), # current annual market correlation
             round(curr_vol, 5), # current historical volatility
             round(hv_percentile, 5), # current implied volatility percentile
-            round(iv_percentile, 5) # current historical volatility percentile
+            round(iv_percentile, 5), # current historical volatility percentile
+            round(above_be_percentile, 5) # annual closes above be percentile
         ]
 
     def __regress_range(self, quotes, end_range, max_ret=1.0):
@@ -523,7 +525,6 @@ class WheelScannerWorkerProcess(multiprocessing.Process):
         risk_free_rate
     ):
 
-
         # get dte
         now_dt = date.today()
         exp_dt = datetime.strptime(expiration, '%Y-%m-%d').date()
@@ -531,6 +532,7 @@ class WheelScannerWorkerProcess(multiprocessing.Process):
 
         # load greeks & iv skew
         greeks_lookup = self.__load_greeks(underlying, dividend, chain, dte, risk_free_rate)
+        if len(greeks_lookup) < self.min_filtered_levels: return [], None, None
         iv_skew, atm_iv = self.__approximate_iv_skew(chain, greeks_lookup)
  
         # filter bad levels
@@ -541,7 +543,7 @@ class WheelScannerWorkerProcess(multiprocessing.Process):
 
         # build deta curve
         coefs = self.__build_delta_curve(filt_chain, greeks_lookup)
-        if coefs is None: return [], 0.0
+        if coefs is None: return [], None, None
  
         # iterate over levels
         contract_collection = []
@@ -553,30 +555,29 @@ class WheelScannerWorkerProcess(multiprocessing.Process):
             premium = level['bid']
             be = level['strike'] - premium
             prob_be_delta = 1 - self.__interpolate_delta(be, coefs)
+            roc = (premium * 100) / (be * 100)
 
             # calculate movement
             iv = greeks_lookup[level['description']]['iv']
             std = underlying * atm_iv * np.sqrt(dte / 365)
             prob_be_iv = 1 - norm.cdf((be - underlying) / std)
+            moneyness = be / underlying
 
-            # filter contracts
-            contract_score = premium * prob_be_iv
-            print(symbol + str(' ') + str(contract_score))
-            if contract_score < self.min_contract_score: continue
-            
             # save contract
             contract_collection.append([
                 level['description'], # contract description
-                round(contract_score, 5), # contract return score 
                 round(premium * 100, 2), # upfront premium
+                round(roc, 5), # return-on-capital
+                round(be * 100, 2), # tied-up-capital
                 round(be, 2), # break-even price
-                round(prob_be_delta, 5), # probability of break even (with delta) 
-                round(prob_be_iv, 5), # probability of break even (with iv)
+                round(moneyness, 5), # break-even moneyness
+                round(prob_be_delta, 5), # probability of break-even (with delta) 
+                round(prob_be_iv, 5), # probability of break-even (with iv)
                 round(iv, 5), # contract implied volatility (percentage)
                 round(iv_skew, 5) # implied volatility skew
             ])
 
-        return contract_collection, atm_iv
+        return contract_collection, atm_iv, be
     
     def __load_greeks(self, underlying, dividend, chain, dte, risk_free_rate):
         greeks_lookup = {}
