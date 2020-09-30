@@ -34,7 +34,8 @@ class WheelScanner(ScannerBase):
         num_processes=6,
         save_scan=True,
         log_changes=True,
-        manual_greeks=False
+        manual_greeks=False,
+        scan_name=None
     ):
 
         self.uni_list = uni_list
@@ -43,6 +44,7 @@ class WheelScanner(ScannerBase):
         self.save_scan = save_scan
         self.log_changes = log_changes
         self.manual_greeks = manual_greeks
+        self.scan_name = scan_name
 
         # fetch universe
         if self.uni_file is not None:
@@ -56,10 +58,11 @@ class WheelScanner(ScannerBase):
             raise Exception('No universe specified.')
 
         # build scan name
-        k = 'wheel'
-        d = str(datetime.today()).split(' ')[0]
-        t = str(datetime.today()).split(' ')[-1].split('.')[0]
-        self.scan_name = '{}_{}_{}'.format(k, d, t)
+        if self.scan_name is None:
+            k = 'wheel'
+            d = str(datetime.today()).split(' ')[0]
+            t = str(datetime.today()).split(' ')[-1].split('.')[0]
+            self.scan_name = '{}_{}_{}'.format(k, d, t)
 
     def run(self):
 
@@ -439,6 +442,71 @@ class WheelScannerWorkerProcess(multiprocessing.Process):
         log += ': ' + msg
         self.log_queue.put(log)
 
+    def __analyze_chain(self, 
+        symbol, 
+        underlying,
+        dividend,
+        expiration, 
+        chain,
+        risk_free_rate
+    ):
+
+        # get dte
+        now_dt = date.today()
+        exp_dt = datetime.strptime(expiration, '%Y-%m-%d').date()
+        dte = (exp_dt - now_dt).days
+
+        # load greeks & iv skew
+        greeks_lookup = self.__load_greeks(underlying, dividend, chain, dte, risk_free_rate)
+        if len(greeks_lookup) < self.min_filtered_levels: return [], None, None
+        iv_skew, atm_iv = self.__approximate_iv_skew(chain, greeks_lookup)
+ 
+        # filter bad levels
+        filt_chain = []
+        for level in chain:
+            if self.__filter_level(symbol, underlying, level):
+                filt_chain.append(level)
+
+        # build deta curve
+        coefs = self.__build_delta_curve(filt_chain, greeks_lookup)
+        if coefs is None: return [], None, None
+ 
+        # iterate over levels
+        contract_collection = []
+        for level in filt_chain:
+            if level['description'] not in greeks_lookup: 
+                continue
+            
+            # calculate contract stats
+            premium = level['bid']
+            be = level['strike'] - premium
+            prob_be_delta = 1 - self.__interpolate_delta(be, coefs)
+            roc = (premium * 100) / (be * 100)
+            drop_dist = np.abs((be - underlying) / underlying) / dte
+
+            # calculate movement
+            iv = greeks_lookup[level['description']]['iv']
+            std = underlying * atm_iv * np.sqrt(dte / 365)
+            prob_be_iv = 1 - norm.cdf((be - underlying) / std)
+            moneyness = be / underlying
+
+            # save contract
+            contract_collection.append([
+                level['description'], # contract description
+                round(premium * 100, 2), # upfront premium
+                round(roc, 5), # return-on-capital
+                round(be * 100, 2), # tied-up-capital
+                round(be, 2), # break-even price
+                round(moneyness, 5), # break-even moneyness
+                round(prob_be_delta, 5), # probability of break-even (with delta) 
+                round(prob_be_iv, 5), # probability of break-even (with iv)
+                round(iv, 5), # contract implied volatility (percentage)
+                round(iv_skew, 5), # implied volatility skew
+                round(drop_dist, 5) # average drop per day to hit be
+            ])
+
+        return contract_collection, atm_iv, be
+
     def __analyze_quotes(self,
         symbol,
         quotes,
@@ -515,69 +583,6 @@ class WheelScannerWorkerProcess(multiprocessing.Process):
         vols = np.array(vols) 
         
         return vols[:-1], vols[-1]
-
-    def __analyze_chain(self, 
-        symbol, 
-        underlying,
-        dividend,
-        expiration, 
-        chain,
-        risk_free_rate
-    ):
-
-        # get dte
-        now_dt = date.today()
-        exp_dt = datetime.strptime(expiration, '%Y-%m-%d').date()
-        dte = (exp_dt - now_dt).days
-
-        # load greeks & iv skew
-        greeks_lookup = self.__load_greeks(underlying, dividend, chain, dte, risk_free_rate)
-        if len(greeks_lookup) < self.min_filtered_levels: return [], None, None
-        iv_skew, atm_iv = self.__approximate_iv_skew(chain, greeks_lookup)
- 
-        # filter bad levels
-        filt_chain = []
-        for level in chain:
-            if self.__filter_level(symbol, underlying, level):
-                filt_chain.append(level)
-
-        # build deta curve
-        coefs = self.__build_delta_curve(filt_chain, greeks_lookup)
-        if coefs is None: return [], None, None
- 
-        # iterate over levels
-        contract_collection = []
-        for level in filt_chain:
-            if level['description'] not in greeks_lookup: 
-                continue
-            
-            # calculate contract stats
-            premium = level['bid']
-            be = level['strike'] - premium
-            prob_be_delta = 1 - self.__interpolate_delta(be, coefs)
-            roc = (premium * 100) / (be * 100)
-
-            # calculate movement
-            iv = greeks_lookup[level['description']]['iv']
-            std = underlying * atm_iv * np.sqrt(dte / 365)
-            prob_be_iv = 1 - norm.cdf((be - underlying) / std)
-            moneyness = be / underlying
-
-            # save contract
-            contract_collection.append([
-                level['description'], # contract description
-                round(premium * 100, 2), # upfront premium
-                round(roc, 5), # return-on-capital
-                round(be * 100, 2), # tied-up-capital
-                round(be, 2), # break-even price
-                round(moneyness, 5), # break-even moneyness
-                round(prob_be_delta, 5), # probability of break-even (with delta) 
-                round(prob_be_iv, 5), # probability of break-even (with iv)
-                round(iv, 5), # contract implied volatility (percentage)
-                round(iv_skew, 5) # implied volatility skew
-            ])
-
-        return contract_collection, atm_iv, be
     
     def __load_greeks(self, underlying, dividend, chain, dte, risk_free_rate):
         greeks_lookup = {}
