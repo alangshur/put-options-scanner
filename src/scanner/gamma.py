@@ -1,15 +1,18 @@
 from py_vollib.black_scholes_merton.implied_volatility import implied_volatility
 from py_vollib.black_scholes_merton.greeks import analytical
+from sklearn.linear_model import LinearRegression
 import numpy.polynomial.polynomial as poly
 from src.scanner.base import ScannerBase
+from src.api.yfinance import YFinanceAPI
 from src.util.atomic import AtomicBool
 from src.api.tradier import TradierAPI
 from src.api.polygon import PolygonAPI
-from src.api.yfinance import YFinanceAPI
 from src.api.ycharts import YChartsAPI
 from datetime import datetime, date
 from itertools import permutations
+from scipy.stats import pearsonr
 from queue import Queue, Empty
+from scipy.stats import norm
 from numpy import warnings
 from pathlib import Path
 import multiprocessing
@@ -19,10 +22,11 @@ import threading
 import math
 import time
 import csv
+import sys
 import os
 
 
-class CreditPutSpreadScanner(ScannerBase):
+class GammaScanner(ScannerBase):
 
     def __init__(self, 
         uni_list=None, 
@@ -55,7 +59,7 @@ class CreditPutSpreadScanner(ScannerBase):
 
         # build scan name
         if self.scan_name is None:
-            k = 'cps'
+            k = 'gamma'
             d = str(datetime.today()).split(' ')[0]
             t = str(datetime.today()).split(' ')[-1].split('.')[0]
             self.scan_name = '{}_{}_{}'.format(k, d, t)
@@ -80,7 +84,9 @@ class CreditPutSpreadScanner(ScannerBase):
         log_queue = manager.Queue()
 
         # fetch risk-free rate
-        risk_free_rate = risk_free_rate_api.fetch_risk_free_rate()
+        if self.manual_greeks: 
+            risk_free_rate = risk_free_rate_api.fetch_risk_free_rate()
+        else: risk_free_rate = 0.0
 
         # load queue
         for symbol in self.uni:
@@ -89,7 +95,7 @@ class CreditPutSpreadScanner(ScannerBase):
         # run scanner threads
         s_processes = []
         for i in range(self.num_processes):
-            s_process = CreditPutSpreadScannerProcess(
+            s_process = GammaScannerWorkerProcess(
                 process_num=i + 1, 
                 option_api=option_api, 
                 stock_api=stock_api,
@@ -108,7 +114,7 @@ class CreditPutSpreadScanner(ScannerBase):
             s_processes.append(s_process)
 
         # run director thread
-        d_thread = CreditPutSpreadDirectorThread(
+        d_thread = GammaScannerDirectorThread(
             api_rate_cv=api_rate_cv,
             api_rate_avail=api_rate_avail,
             exit_flag=director_exit_flag,
@@ -181,7 +187,7 @@ class CreditPutSpreadScanner(ScannerBase):
         os.fsync(f)
 
 
-class CreditPutSpreadScannerProcess(multiprocessing.Process):
+class GammaScannerWorkerProcess(multiprocessing.Process):
 
     def __init__(self, 
         process_num, 
@@ -199,11 +205,15 @@ class CreditPutSpreadScannerProcess(multiprocessing.Process):
         manual_greeks,
 
         max_fetch_attempts=5,
-        min_filtered_levels=5,
         option_price_floor=0.10,
         open_interest_floor=5,
         volume_floor=5,
-        max_spread_width=20
+        index='SPY',
+        regression_range=30,
+        volatility_period=30,
+        max_net_delta=0.03,
+        min_contract_delta=0.45,
+        min_relative_be_dist=0.80
     ):
 
         multiprocessing.Process.__init__(self)
@@ -222,22 +232,28 @@ class CreditPutSpreadScannerProcess(multiprocessing.Process):
         self.manual_greeks = manual_greeks
 
         self.max_fetch_attempts = max_fetch_attempts
-        self.min_filtered_levels = min_filtered_levels
         self.option_price_floor = option_price_floor
         self.open_interest_floor = open_interest_floor
         self.volume_floor = volume_floor
-        self.max_spread_width = max_spread_width
+        self.index = index
+        self.regression_range = regression_range
+        self.volatility_period = volatility_period
+        self.max_net_delta = max_net_delta
+        self.min_contract_delta = min_contract_delta
+        self.min_relative_be_dist = min_relative_be_dist
         self.process_name = self.__class__.__name__ + str(self.process_num)
 
     def run(self):
         self.__log_message('INFO', 'starting scanner process')
+        self.complete_symbols = {}
 
         # iteratively execute tasks
-        while True:
-            try: symbol = self.symbol_queue.get(block=False)
-            except Empty: break
-            self.__execute_task(symbol)
-            self.symbol_queue.task_done()
+        if self.__fetch_index():
+            while True:
+                try: symbol = self.symbol_queue.get(block=False)
+                except Empty: break
+                self.__execute_task(symbol)
+                self.symbol_queue.task_done()
 
         self.__log_message('INFO', 'shutting down scanner process')
 
@@ -255,7 +271,14 @@ class CreditPutSpreadScannerProcess(multiprocessing.Process):
             dividend = self.dividend_api.fetch_annual_yield(symbol)
         else: dividend = 0.0
         
+        # fetch quotes
+        quotes = self.__fetch_quotes(symbol)
+        if quotes is None: 
+            self.__report_fetch_failure('quotes', (symbol,))
+            return
+
         # fetch expiration
+        if not self.__validate_quotes(quotes): return
         expirations = self.__fetch_expirations(symbol)
         if expirations is None:
             self.__report_fetch_failure('expirations', (symbol,))
@@ -273,7 +296,9 @@ class CreditPutSpreadScannerProcess(multiprocessing.Process):
 
             # run analysis
             try:
-                self.result_map[(symbol, expiration)] = self.__analyze_chain(
+
+                # analyze options chain
+                contracts, atm_iv = self.__analyze_chain(
                     symbol=symbol, 
                     underlying=underlying, 
                     dividend=dividend, 
@@ -281,6 +306,19 @@ class CreditPutSpreadScannerProcess(multiprocessing.Process):
                     chain=chain, 
                     risk_free_rate=self.risk_free_rate
                 )
+
+                # analyze underlying quotes
+                if len(contracts) == 0: continue
+                quotes_data = self.__analyze_quotes(
+                    symbol=symbol,
+                    quotes=quotes,
+                    atm_iv=atm_iv
+                )
+
+                # compile analysis data
+                contracts = [c + quotes_data for c in contracts]
+                self.result_map[(symbol, expiration)] = contracts
+
             except Exception as e:
                 self.__report_analysis_failure((symbol, expiration), str(e))
 
@@ -300,8 +338,26 @@ class CreditPutSpreadScannerProcess(multiprocessing.Process):
         dte = (exp_dt - now_dt).days
 
         # target dte range
-        if dte < 21 or dte > 91: return False
+        if dte <= 35 or dte >= 90: return False
         else: return True
+
+    def __validate_quotes(self, quotes):
+        return len(quotes) == len(self.index_quotes)
+
+    def __fetch_index(self):
+
+        # pull year quotes
+        self.index_quotes = self.stock_api.fetch_year_quotes(self.index)
+        if self.index_quotes is None:
+            self.__report_fetch_failure('index', None)
+            return False
+
+        # convert prices to returns
+        self.index_rets = self.__convert_price_to_return(
+            np.array([q['close'] for q in self.index_quotes])
+        )
+
+        return True
     
     def __fetch_expirations(self, symbol):
         expirations = None
@@ -355,17 +411,32 @@ class CreditPutSpreadScannerProcess(multiprocessing.Process):
 
         return underlying
 
+    def __fetch_quotes(self, symbol):
+        quotes = None
+        attempts = 0
+
+        # retry api fetch
+        while quotes is None:
+            if attempts >= self.max_fetch_attempts: return None
+            quotes = self.stock_api.fetch_year_quotes(symbol) 
+            attempts += 1
+            
+        return quotes
+
     def __wait_api_rate(self):
         with self.api_rate_cv:
             self.api_rate_cv.wait()
 
     def __report_fetch_failure(self, component, fetch_data):
         self.fetch_failure_counter.value += 1
-        self.__log_message('ERROR', '{} fetch failed for {}'.format(component, fetch_data))
+        self.__log_message('ERROR', '{} fetch failed for {}'.format(
+            component, fetch_data))
 
     def __report_analysis_failure(self, analysis_data, error_msg):
+        line_no = sys.exc_info()[-1].tb_lineno
         self.analysis_failure_counter.value += 1
-        self.__log_message('ERROR', 'analysis failed for {} with error \"{}\"'.format(analysis_data, error_msg))
+        self.__log_message('ERROR', 'analysis failed for {} with error \"{}\" at line {}'.format(
+            analysis_data, error_msg, line_no))
 
     def __log_message(self, tag, msg):
         log = str(datetime.today())
@@ -388,82 +459,155 @@ class CreditPutSpreadScannerProcess(multiprocessing.Process):
         exp_dt = datetime.strptime(expiration, '%Y-%m-%d').date()
         dte = (exp_dt - now_dt).days
 
-        # filter bad levels
-        filt_chain = []
-        for level in chain:
-            if self.__filter_level(symbol, underlying, level):
-                filt_chain.append(level)
+        # load greeks & iv skew
+        greeks_lookup = self.__load_greeks(underlying, dividend, chain, dte, risk_free_rate)
+        atm_iv = self.__get_atm_iv(chain, greeks_lookup)
 
-        # load greeks/iv
-        greeks_lookup = self.__load_greeks(underlying, dividend, filt_chain, dte, risk_free_rate)
-        if len(greeks_lookup) < self.min_filtered_levels: return []
-        coefs = self.__build_delta_curve(greeks_lookup)
- 
-        # iterate over spreads
-        spread_collection = []
-        for buy_level, sell_level in permutations(filt_chain, 2):
-            if buy_level['strike'] >= sell_level['strike']: continue
+        # iterate over levels
+        contract_collection = []
+        for put_level, call_level in permutations(chain, 2):
+            if put_level['option_type'] != 'put': continue
+            if call_level['option_type'] != 'call': continue
+            if put_level['strike'] > call_level['strike']: continue
+            if put_level['strike'] / call_level['strike'] < 0.95: continue
+            if put_level['strike'] > underlying: continue
+            if call_level['strike'] < underlying: continue
+            if put_level['description'] not in greeks_lookup: continue
+            if call_level['description'] not in greeks_lookup: continue
 
-            # calculate/filter p/l
-            width = sell_level['strike'] - buy_level['strike']
-            premium = sell_level['bid'] - buy_level['ask']
-            max_loss = premium - width
-            be = sell_level['strike'] - premium
-            risk_reward_ratio = abs(premium / max_loss)
-            if width > self.max_spread_width: continue
-            if premium <= 0.0: continue
-            if be <= buy_level['strike']: continue
-            if be >= sell_level['strike']: continue
+            # enforce delta neutrality
+            put_delta = greeks_lookup[put_level['description']]['delta']
+            call_delta = greeks_lookup[call_level['description']]['delta']
+            net_delta = put_delta + call_delta
+            if np.abs(put_delta) < self.min_contract_delta: continue
+            if np.abs(call_delta) < self.min_contract_delta: continue
+            if net_delta > self.max_net_delta or net_delta < -self.max_net_delta:
+                continue
 
-            # fetch greeks
-            buy_greeks = greeks_lookup[buy_level['strike']]
-            sell_greeks = greeks_lookup[sell_level['strike']]
+            # calculate gamma-theta ratio
+            put_theta = greeks_lookup[put_level['description']]['theta']
+            put_gamma = greeks_lookup[put_level['description']]['gamma']
+            call_theta = greeks_lookup[call_level['description']]['theta']
+            call_gamma = greeks_lookup[call_level['description']]['gamma']
+            net_theta = put_theta + call_theta
+            net_gamma = put_gamma + call_gamma
+            gamma_theta_ratio = net_gamma / net_theta 
 
-            # get probabilities
-            prob_max_loss = abs(buy_greeks['delta'])
-            prob_max_profit = 1 - abs(sell_greeks['delta'])
+            # calculate contract stats
+            cost = put_level['ask'] + call_level['ask']
+            width = call_level['strike'] - put_level['strike']
+            put_be = put_level['strike'] - cost
+            call_be = call_level['strike'] + cost
+            relative_be_dist = 1 - (call_be - put_be) / underlying
+            if relative_be_dist < self.min_relative_be_dist: continue
 
-            # calculated/filter expected profits
-            expected_spread_profit, total_spread_prob = self.__approximate_risk_adjusted_spread_profit(
-                width, premium, buy_level['strike'], sell_level['strike'], coefs, resolution=0.1)
-            expected_profit = prob_max_loss * max_loss
-            expected_profit += prob_max_profit * premium
-            expected_profit += expected_spread_profit
-            if expected_profit <= 0.0: continue
-            if abs(1.0 - (prob_max_loss + total_spread_prob + prob_max_profit)) >= 0.1: continue
+            # calculate movement
+            std = underlying * atm_iv * np.sqrt(dte / 365)
+            put_iv = greeks_lookup[put_level['description']]['iv']
+            call_iv = greeks_lookup[call_level['description']]['iv']
 
-            # calulate net greeks
-            net_delta = buy_greeks['delta'] - sell_greeks['delta']
-            net_theta = buy_greeks['theta'] - sell_greeks['theta']
-            net_vega = buy_greeks['vega'] - sell_greeks['vega']
-            net_gamma = buy_greeks['gamma'] - sell_greeks['gamma']
-            
-            # add valid spreads
-            spread_collection.append([
-                '{} {} +{}/-{}'.format(symbol, expiration, buy_level['strike'], sell_level['strike']), # description
-                round(width, 2), # width
-                round(premium * 100, 2), # premium
-                round(max_loss * 100, 2), # max loss
-                round(be, 2), # break even
-                round(risk_reward_ratio, 2), # risk reward ratio
-                round(prob_max_loss, 2), # probability of max loss
-                round(prob_max_profit, 2), # probability of max profit
-                round(expected_profit * 100, 2), # risk-adjusted profit
-                round(net_delta, 2), # position delta
-                round(net_theta, 2), # position theta
-                round(net_vega, 2), # position vega
-                round(net_gamma, 2) # position gamma
+            # save contract
+            contract_collection.append([
+                '{} {} +{}p/+{}c'.format(symbol, expiration, put_level['strike'], call_level['strike']), # description
+                round(underlying, 2), # underlying price
+                round(cost, 2), # upfront cost
+                round(width, 5), # strike width
+                round(put_be, 2), # break-even on put side
+                round(call_be, 2), # break-even on call side
+                round(relative_be_dist, 5), # relative break-even distance
+                round(net_delta, 5), # net position delta
+                round(gamma_theta_ratio, 5), # net gamma-theta ratio
+                round(std, 5), # implied standard deviation
+                round(put_iv, 5), # put contract implied volatility
+                round(call_iv, 5), # call contract implied volatility
+                round(atm_iv, 5), # ATM implied volatility
             ])
 
-        return spread_collection
+        return contract_collection, atm_iv
+
+    def __analyze_quotes(self,
+        symbol,
+        quotes,
+        atm_iv
+    ):
+
+        # calculate reg & corr & vol scores
+        if symbol not in self.complete_symbols:
+            quotes = np.array([q['close'] for q in quotes])
+            ret, score = self.__regress_range(quotes, self.regression_range)
+            symbol_rets = self.__convert_price_to_return(quotes)
+            corr = pearsonr(symbol_rets, self.index_rets)[0]
+            vols, curr_vol = self.__calc_vol_windows(symbol_rets)
+            self.complete_symbols[symbol] = (quotes, ret, score, corr, vols, curr_vol)
+        else:
+            quotes, ret, score, corr, vols, curr_vol = self.complete_symbols[symbol]
+            
+        # calculate vol/be percentiles
+        hv_percentile = (vols < curr_vol).sum() / vols.shape[0]
+        iv_percentile = (vols < atm_iv).sum() / vols.shape[0]
+
+        return [
+            round(ret, 5), # period return over regression range
+            round(score, 5), # regression score over regression range
+            round(corr, 5), # current annual market correlation
+            round(curr_vol, 5), # current historical volatility
+            round(hv_percentile - iv_percentile, 5), # hvp-ivp diff
+        ]
+
+    def __regress_range(self, quotes, end_range, max_ret=1.0):
+         
+        # get variables
+        if end_range >= quotes.shape[0]: y = quotes
+        else: y = quotes[quotes.shape[0] - end_range:]
+        x = np.arange(y.shape[0]).reshape(-1, 1)
+
+        # get return
+        ret = (y[-1] - y[0]) / y[0]
+        if ret > max_ret: ret = max_ret
+        if ret < -max_ret: ret = -max_ret
+
+        # fit regression
+        reg = LinearRegression()
+        reg.fit(x, y).coef_[0]
+        score = reg.score(x, y)
+
+        return ret, score
+
+    def __convert_price_to_return(self, quotes):
+        last_quote = quotes[0]
+        rets = []
+
+        # iteratively convert p-to-r
+        for quote in quotes[1:]:
+            ret = (quote - last_quote) / last_quote
+            rets.append(ret)
+            last_quote = quote
+
+        return np.array(rets)
+
+    def __calc_vol_windows(self, symbol_rets):
+        ret_history = symbol_rets.shape[0]
+        vols = []
+
+        # calculate vols over moving period
+        for i in range(ret_history - self.volatility_period):
+            window = symbol_rets[i:i + self.volatility_period]
+            annualized_vol = np.std(window) * np.sqrt(ret_history)
+            vols.append(annualized_vol)
+        vols = np.array(vols) 
+        
+        return vols[:-1], vols[-1]
     
     def __load_greeks(self, underlying, dividend, chain, dte, risk_free_rate):
         greeks_lookup = {}
 
-        # load greeks for chain
+        # calculate greeks for chain
         for level in chain:
-            greeks = self.__calculate_greeks(underlying, dividend, level, dte, risk_free_rate)
-            greeks_lookup[level['strike']] = greeks
+            try: greeks = self.__calculate_greeks(underlying, dividend, level, dte, risk_free_rate)
+            except: continue
+
+            # map contract description to greeks
+            greeks_lookup[level['description']] = greeks
 
         return greeks_lookup
 
@@ -500,48 +644,34 @@ class CreditPutSpreadScannerProcess(multiprocessing.Process):
             'rho': analytical.rho(flag, S, K, t, r, sigma, q)
         }
 
-    def __build_delta_curve(self, greeks_lookup):
-        fit_data = np.array([(k, v['delta']) for k, v in greeks_lookup.items()])
+    def __get_atm_iv(self, chain, greeks_lookup):
+        delta_put_diff, delta_call_diff = float('inf'), float('inf')
+        delta_put_level, delta_call_level = None, None 
 
-        # fit with dynamic order
-        order, coefs = 11, None
-        with warnings.catch_warnings():
-            warnings.filterwarnings('error')
-            while coefs is None:
-                try: coefs = poly.polyfit(fit_data[:, 0], np.abs(fit_data[:, 1]), order)
-                except np.polynomial.polyutils.RankWarning: order -= 1
-        return coefs
+        # iterate over raw chain
+        for level in chain:
+            if level['description'] not in greeks_lookup: 
+                continue
 
-    def __approximate_risk_adjusted_spread_profit(self, width, premium, buy_strike, 
-            sell_strike, coefs, resolution=0.1):
+            # find closest delta levels
+            diff = np.abs(np.abs(greeks_lookup[level['description']]['delta']) - 0.50)
+            if level['option_type'] == 'put':
+                if diff < delta_put_diff: 
+                    delta_put_diff = diff
+                    delta_put_level = level
+            elif level['option_type'] == 'call':
+                if diff < delta_call_diff: 
+                    delta_call_diff = diff
+                    delta_call_level = level
 
-        total_spread_prob = 0
-        expected_profit = 0
-        for i in range(int(width / resolution)):
+        # calculate atm iv
+        atm_iv = (greeks_lookup[delta_put_level['description']]['iv'] + \
+            greeks_lookup[delta_call_level['description']]['iv']) / 2
 
-            # resolve price interval
-            lo = round(buy_strike + resolution * i, 2)
-            hi = round(lo + resolution, 2)
-            future_price = round((lo + hi) / 2, 2)
-            
-            # approximate interval probability
-            lo_delta = self.__interpolate_delta(lo, coefs)
-            hi_delta = self.__interpolate_delta(hi, coefs)
-            interval_prob = hi_delta - lo_delta
-            if interval_prob < 0: interval_prob = 0
-            
-            # calculate expected interval return
-            interval_return = (future_price - sell_strike) + premium
-            expected_profit += interval_prob * interval_return
-            total_spread_prob += interval_prob
-        
-        return expected_profit, total_spread_prob
-
-    def __interpolate_delta(self, price, coefs):
-        return poly.polyval(price, coefs)
+        return atm_iv
 
     def __filter_level(self, symbol, underlying, level):
-        if level['option_type'] != 'put': return False # ignore put options
+        if level['option_type'] != 'put': return False # ignore call options
         if underlying <= level['strike']: return False # ignore ATM/ITM options
         if level['root_symbol'] != symbol: return False # ignore adjusted options
         if level['last'] is None or level['last'] <= self.option_price_floor: return False # ignore low last price
@@ -552,7 +682,7 @@ class CreditPutSpreadScannerProcess(multiprocessing.Process):
         return True
 
 
-class CreditPutSpreadDirectorThread(threading.Thread):
+class GammaScannerDirectorThread(threading.Thread):
 
     def __init__(self,
         api_rate_cv,

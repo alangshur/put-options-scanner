@@ -4,7 +4,6 @@
 
 - 35-75 DTE
 - \>70% OTM probability
-- Stick to 
 
 ## Managing Positions
 
@@ -14,7 +13,7 @@
   - Situation 1: If underlying moves early, close at a profit (set a stop loss above current price).
   - Situation 2: If in the green and the underlying starts reversing, close at a profit (set a stop loss above current price).
 - Roll for a credit:
-  - Situation 1: If underlying dips, roll for a net credit if possible to the safest delta.
+  - Situation 1: If underlying dips, roll down for a net credit if possible to the safest delta that still ensures a debit. It is better to be proactive about this move, or rolling down for a credit will be super difficult.
 - Roll for a debit:
   - Situation 1: Only roll for a debit if it will provide necessary protection against downwards movement in the underlying (and is less than closing position).
 - Leg into spread:
@@ -37,4 +36,4 @@
   - Continuous scanning to close positions
   - Continuous scanning to leg into spread
   - Addition of new calls once expired
-
+  - Daily stop loss set at the beginning of the day

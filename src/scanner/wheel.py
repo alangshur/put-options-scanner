@@ -207,8 +207,8 @@ class WheelScannerWorkerProcess(multiprocessing.Process):
         max_fetch_attempts=5,
         min_filtered_levels=5,
         option_price_floor=0.10,
-        open_interest_floor=5,
-        volume_floor=5,
+        open_interest_floor=3,
+        volume_floor=3,
         index='SPY',
         regression_range=30,
         volatility_period=30
@@ -335,7 +335,7 @@ class WheelScannerWorkerProcess(multiprocessing.Process):
         dte = (exp_dt - now_dt).days
 
         # target dte range
-        if dte <= 35 or dte >= 60: return False
+        if dte <= 30 or dte >= 60: return False
         else: return True
 
     def __validate_quotes(self, quotes):
@@ -459,14 +459,14 @@ class WheelScannerWorkerProcess(multiprocessing.Process):
         # load greeks & iv skew
         greeks_lookup = self.__load_greeks(underlying, dividend, chain, dte, risk_free_rate)
         if len(greeks_lookup) < self.min_filtered_levels: return [], None, None
-        iv_skew, atm_iv = self.__approximate_iv_skew(chain, greeks_lookup)
+        atm_iv = self.__get_atm_iv(chain, greeks_lookup)
  
         # filter bad levels
         filt_chain = []
         for level in chain:
-            if self.__filter_level(symbol, underlying, level):
+            if self.__filter_put_levels(symbol, underlying, level):
                 filt_chain.append(level)
-
+        
         # build deta curve
         coefs = self.__build_delta_curve(filt_chain, greeks_lookup)
         if coefs is None: return [], None, None
@@ -486,6 +486,7 @@ class WheelScannerWorkerProcess(multiprocessing.Process):
 
             # calculate movement
             iv = greeks_lookup[level['description']]['iv']
+            iv_skew = iv / atm_iv
             std = underlying * atm_iv * np.sqrt(dte / 365)
             prob_be_iv = 1 - norm.cdf((be - underlying) / std)
             moneyness = be / underlying
@@ -493,6 +494,7 @@ class WheelScannerWorkerProcess(multiprocessing.Process):
             # save contract
             contract_collection.append([
                 level['description'], # contract description
+                round(underlying, 2), # underlying price
                 round(premium * 100, 2), # upfront premium
                 round(roc, 5), # return-on-capital
                 round(be * 100, 2), # tied-up-capital
@@ -630,6 +632,32 @@ class WheelScannerWorkerProcess(multiprocessing.Process):
             'rho': analytical.rho(flag, S, K, t, r, sigma, q)
         }
 
+    def __get_atm_iv(self, chain, greeks_lookup):
+        delta_put_diff, delta_call_diff = float('inf'), float('inf')
+        delta_put_level, delta_call_level = None, None 
+
+        # iterate over raw chain
+        for level in chain:
+            if level['description'] not in greeks_lookup: 
+                continue
+
+            # find closest delta levels
+            diff = np.abs(np.abs(greeks_lookup[level['description']]['delta']) - 0.50)
+            if level['option_type'] == 'put':
+                if diff < delta_put_diff: 
+                    delta_put_diff = diff
+                    delta_put_level = level
+            elif level['option_type'] == 'call':
+                if diff < delta_call_diff: 
+                    delta_call_diff = diff
+                    delta_call_level = level
+
+        # calculate atm iv
+        atm_iv = (greeks_lookup[delta_put_level['description']]['iv'] + \
+            greeks_lookup[delta_call_level['description']]['iv']) / 2
+
+        return atm_iv
+
     def __build_delta_curve(self, filt_chain, greeks_lookup):
         fit_data = []
         for level in filt_chain:
@@ -651,50 +679,13 @@ class WheelScannerWorkerProcess(multiprocessing.Process):
             while coefs is None:
                 try: coefs = poly.polyfit(fit_data[:, 0], np.abs(fit_data[:, 1]), order)
                 except np.polynomial.polyutils.RankWarning: order -= 1
+        
         return coefs
-
-    def __approximate_iv_skew(self, chain, greeks_lookup):
-        delta_25_put_diff, delta_25_call_diff = float('inf'), float('inf')
-        delta_50_put_diff, delta_50_call_diff = float('inf'), float('inf')
-        delta_25_put_level, delta_25_call_level = None, None 
-        delta_50_put_level, delta_50_call_level = None, None 
-
-        # iterate over raw chain
-        for level in chain:
-            if level['description'] not in greeks_lookup: 
-                continue
-
-            # find closest delta levels
-            diff_25 = np.abs(np.abs(greeks_lookup[level['description']]['delta']) - 0.25)
-            diff_50 = np.abs(np.abs(greeks_lookup[level['description']]['delta']) - 0.50)
-            if level['option_type'] == 'put':
-                if diff_25 < delta_25_put_diff: 
-                    delta_25_put_diff = diff_25
-                    delta_25_put_level = level
-                if diff_50 < delta_50_put_diff: 
-                    delta_50_put_diff = diff_50
-                    delta_50_put_level = level
-            elif level['option_type'] == 'call':
-                if diff_25 < delta_25_call_diff: 
-                    delta_25_call_diff = diff_25
-                    delta_25_call_level = level
-                if diff_50 < delta_50_call_diff: 
-                    delta_50_call_diff = diff_50
-                    delta_50_call_level = level
-
-        # calculate skew
-        delta_25_put_iv = greeks_lookup[delta_25_put_level['description']]['iv']
-        delta_25_call_iv = greeks_lookup[delta_25_call_level['description']]['iv']
-        delta_50_iv = (greeks_lookup[delta_50_put_level['description']]['iv'] + \
-            greeks_lookup[delta_50_call_level['description']]['iv']) / 2
-        skew = (delta_25_put_iv - delta_25_call_iv) / delta_50_iv
-
-        return skew, delta_50_iv
 
     def __interpolate_delta(self, price, coefs):
         return poly.polyval(price, coefs)
 
-    def __filter_level(self, symbol, underlying, level):
+    def __filter_put_levels(self, symbol, underlying, level):
         if level['option_type'] != 'put': return False # ignore call options
         if underlying <= level['strike']: return False # ignore ATM/ITM options
         if level['root_symbol'] != symbol: return False # ignore adjusted options

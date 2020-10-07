@@ -3,22 +3,14 @@ import os
 
 
 if __name__ == '__main__':
-
-    # scanner = EquityHistoryScanner(
-    #     uni_file='universe/test-symbols.csv',
-    #     num_processes=6
-    # )
-
-    # scanner = OptionCreditPutSpreadScanner(
-    #     uni_file='universe/test-symbols.csv', 
-    #     num_processes=6
-    # )
-
     scanner = WheelScanner(
-        uni_file='universe/active-symbols.csv', 
+        uni_file='universe/active-equities.csv',
         num_processes=6,
-        scan_name='wheel-active-1'
+        save_scan=True,
+        log_changes=True,
+        scan_name='wheel-equities-1'
     )
 
     results = scanner.run()
-    print(results)
+    print('Fetch errors: {}'.format(results['fetch_failure_count']))    
+    print('Fetch errors: {}'.format(results['analysis_failure_count']))

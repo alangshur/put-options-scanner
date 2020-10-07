@@ -1,8 +1,10 @@
 env
+.pyc
 .env
 .vscode
 .ipynb_checkpoints
 *__pycache__
+intra_scan
 cache
 scan
 log
