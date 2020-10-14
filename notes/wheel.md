@@ -2,8 +2,11 @@
 
 ## Picking Positions
 
-- 35-75 DTE
-- \>70% OTM probability
+1. Run scanner
+2. Pick positions with best ROC/moneyness
+3. Verify underlying has traded in healthy price range with decent upward momentum
+4. Verify underlying has buy rating (CNN Business Forecast) and long-term increase
+5. Set limit above ask
 
 ## Managing Positions
 

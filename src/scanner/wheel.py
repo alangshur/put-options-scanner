@@ -482,8 +482,7 @@ class WheelScannerWorkerProcess(multiprocessing.Process):
             be = level['strike'] - premium
             prob_be_delta = 1 - self.__interpolate_delta(be, coefs)
             roc = (premium * 100) / (be * 100)
-            drop_dist = np.abs((be - underlying) / underlying) / dte
-
+            
             # calculate movement
             iv = greeks_lookup[level['description']]['iv']
             iv_skew = iv / atm_iv
@@ -496,15 +495,14 @@ class WheelScannerWorkerProcess(multiprocessing.Process):
                 level['description'], # contract description
                 round(underlying, 2), # underlying price
                 round(premium * 100, 2), # upfront premium
+                round(dte, 0), # days to expiration
                 round(roc, 5), # return-on-capital
-                round(be * 100, 2), # tied-up-capital
                 round(be, 2), # break-even price
                 round(moneyness, 5), # break-even moneyness
                 round(prob_be_delta, 5), # probability of break-even (with delta) 
                 round(prob_be_iv, 5), # probability of break-even (with iv)
                 round(iv, 5), # contract implied volatility (percentage)
                 round(iv_skew, 5), # implied volatility skew
-                round(drop_dist, 5) # average drop per day to hit be
             ])
 
         return contract_collection, atm_iv, be

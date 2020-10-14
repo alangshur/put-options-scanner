@@ -1,3 +1,4 @@
+from datetime import datetime
 import requests
 import os
 from dotenv import load_dotenv
@@ -93,6 +94,46 @@ class TradierAPI:
         except: return None
         return (
             underlying, 
+            rate_available,
+            rate_allowed,
+            rate_expiry
+        )
+
+    def fetch_contract(self, contract_string):
+        try:
+
+            # format contract symbol
+            contract_comps = contract_string.split(' ')
+            dt = datetime.strptime(' '.join(contract_comps[1:4]), '%B %d %Y')
+            contract_symbol = '{}{}{}{}{}{}'.format(
+                contract_comps[0],
+                str(dt.year)[-2:],
+                str(dt.month).zfill(2),
+                str(dt.day).zfill(2),
+                contract_comps[5][0].upper(),
+                str(int(contract_comps[4][1:]) * 1000).zfill(8)
+            )
+
+            # format request
+            url = os.environ.get('TRADIER_ENDPOINT') + \
+                'quotes?' + \
+                'symbols={}&'.format(contract_symbol) + \
+                'greeks=false'
+            headers = {
+                'Authorization': 'Bearer ' + os.environ.get('TRADIER_API_KEY'), 
+                'Accept': 'application/json'
+            }
+
+            # send request
+            r_data = requests.get(url, headers=headers)
+            contract_quote = r_data.json()['quotes']['quote']
+            rate_available = int(r_data.headers['X-Ratelimit-Available'])
+            rate_allowed = int(r_data.headers['X-Ratelimit-Allowed'])
+            rate_expiry = int(r_data.headers['X-Ratelimit-Expiry'])
+            
+        except: return None
+        return (
+            contract_quote, 
             rate_available,
             rate_allowed,
             rate_expiry
