@@ -111,7 +111,7 @@ class TradierAPI:
                 str(dt.month).zfill(2),
                 str(dt.day).zfill(2),
                 contract_comps[5][0].upper(),
-                str(int(contract_comps[4][1:]) * 1000).zfill(8)
+                str(int(float(contract_comps[4][1:]) * 1000)).zfill(8)
             )
 
             # format request

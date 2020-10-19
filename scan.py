@@ -7,12 +7,12 @@ import os
 
 # set constants
 balance = 100100
-position_pp = 0.05
+position_pp = 0.10
 target_equities = [
-    'AAL', 'UAL', 'AAPL', 'TWTR', 'SQ', 'SNAP', 'SHOP', 'ROKU', 'INTC', 
-    'AMD', 'FB', 'CAT', 'AMZN', 'TSLA', 'T', 'CSCO', 'CVS', 'VZ', 'BAC', 
-    'C', 'KO', 'TGT', 'PG', 'CLX', 'KMB', 'JNJ', 'TROW', 'F', 'WM', 'SYY', 
-    'AFL', 'WFC', 'GE', 'DB', 'DIS', 'NVDA'
+    'AAPL', 'TWTR', 'SQ', 'SNAP', 'SHOP', 'ROKU', 'INTC', 'AMD', 'FB', 
+    'CAT', 'AMZN', 'TSLA', 'T', 'CSCO', 'CVS', 'VZ', 'BAC', 'C', 'KO', 
+    'TGT', 'PG', 'CLX', 'KMB', 'JNJ', 'TROW', 'F', 'WM', 'SYY', 'AFL', 
+    'WFC', 'GE', 'DB', 'DIS', 'NVDA'
 ]
 
 
@@ -39,16 +39,21 @@ if __name__ == '__main__':
     ]
 
     # filter all contracts
+    df['a_roc'] = (1.0 + df['roc']) ** (365.2425 / df['dte']) - 1.0
     df = df[df['be'] <= 200]
-    df = df[df['prob_be_delta'] >= 0.85]
+    df = df[df['prob_be_delta'] >= 0.80]
+    df = df[df['a_roc'] >= 0.15]
+
+    def normalize(row):
+        return (row - row.min()) / (row.max() - row.min())
 
     # refine columns
     df_filt = pd.DataFrame().astype(np.float64)
     df_filt['und'] = df['underlying']
     df_filt['roc'] = df['roc']
-    df_filt['a_roc'] = (1.0 + df['roc']) ** (365.2425 / df['dte']) - 1.0
+    df_filt['a_roc'] = df['a_roc']
     df_filt['be'] = df['be']
-    df_filt['score'] = df['prob_be_delta'] * df_filt['a_roc']
+    df_filt['score'] = normalize(df['a_roc']) * normalize(df['prob_be_delta'])
     df_filt['be_moneyness'] = df['be_moneyness']
     df_filt['prob_be_delta'] = df['prob_be_delta']
     df_filt['prob_be_iv'] = df['prob_be_iv']
