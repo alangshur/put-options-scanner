@@ -7,21 +7,24 @@ import numpy as np
 
 # set constants
 portfolio_contracts = [
-    ['ROKU November 13 2020 $180 Put', 4.28],
-    ['SNAP November 20 2020 $22 Put', 0.49],
-    ['AAPL November 20 2020 $106.25 Put', 1.75],
-    ['TWTR November 27 2020 $39 Put', 1.14],
-    ['CAT November 20 2020 $155 Put', 2.74]
+    ['ROKU November 13 2020 $180 Put', 4.28, 1],
+    ['SNAP November 20 2020 $22 Put', 0.49, 4],
+    ['AAPL November 20 2020 $106.25 Put', 1.75, 1],
+    ['TWTR November 27 2020 $39 Put', 1.14, 3],
+    ['CAT November 20 2020 $155 Put', 2.74, 1]
 ]
 
 
 if __name__ == '__main__':
-    contract_data = [[], [], [], [], [], [], []] 
+    contract_data = [[], [], [], [], [], [], [], []] 
     api = TradierAPI()
+    portfolio_pl = 0
+    max_portfolio_pl = 0
+    cash_util = 0
 
     # analyze contract data
     for contract in portfolio_contracts:
-        contract_string, sell_price = contract
+        contract_string, sell_price, qty = contract
         contract_comps = contract_string.split(' ')
 
         # get quotes
@@ -46,9 +49,16 @@ if __name__ == '__main__':
         contract_data[4].append(round(moneyness * 100, 2))
         contract_data[5].append(moneyness_status)
 
-        # get return
+        # get return and p/l
         ret = round((contract_query['ask'] - sell_price) / sell_price * -100, 2)
+        pl = (sell_price - contract_query['ask']) * 100 * qty
         contract_data[6].append(ret)
+        contract_data[7].append(pl)
+
+        # update general stats
+        portfolio_pl += pl
+        max_portfolio_pl += sell_price * 100 * qty
+        cash_util += strike * 100 * qty
 
     # build dataframe
     df = pd.DataFrame(np.transpose(contract_data))
@@ -56,9 +66,18 @@ if __name__ == '__main__':
     df.columns = [
         'underlying_price ($)', 'contract_price ($)', 
         'dte', 'be ($)', 'moneyness (%)', 'status', 
-        'return (%)'
+        'return (%)', 'p/l ($)'
     ]
+
+    # print general stats
+    print()
+    print('Portfolio size: {}'.format(len(portfolio_contracts)))
+    print('Realized portfolio p/l: {} USD'.format(round(portfolio_pl, 2)))
+    print('Max portfolio p/l: {} USD'.format(round(max_portfolio_pl, 2)))
+    print('Cash utilization: {} USD'.format(round(cash_util, 2)))
+    print()
 
     # print dataframe
     formatted_df = tabulate(df, headers='keys', tablefmt='psql')
     print(formatted_df)
+    print()
