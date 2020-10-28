@@ -1,3 +1,4 @@
+from src.util.sheets import SheetsPortfolioExtractor
 from src.scanner.wheel import WheelScanner
 from tabulate import tabulate
 import pandas as pd
@@ -5,27 +6,13 @@ import numpy as np
 import os
 
 
-# set constants
-balance = 100100
-position_pp = 0.10
-target_equities = [
-    'AAPL', 'TWTR', 'SNAP', 'SHOP', 'ROKU', 
-    'INTC', 'AMD', 'FB', 'CAT', 'AMZN', 
-    'TSLA', 'T', 'CSCO', 'CVS', 'VZ', 
-    'BAC', 'C', 'KO', 'TGT', 'PG', 
-    'CLX', 'KMB', 'JNJ', 'TROW', 'F', 
-    'WM', 'SYY', 'AFL', 'WFC', 'GE', 
-    'UAL', 'KR', 'MGM', 'UBER', 'NOK',
-    'PFE', 'TMUS', 'CLX', 'ADM', 'PEP',
-    'LEG', 'SPY', 'QQQ', 'XLF', 'SLV', 
-    'GLD', 'XLU', 'XLP', 'IWD', 'GDX',
-    'XLK', 'XLE', 'TLT', 'EEM', 'IAU',
-    'SCHF', 'VEA', 'SPYG', 'DB', 'DIS', 
-    'NVDA', 'AAL'
-]
-
-
 if __name__ == '__main__':
+
+    # fetch target equities
+    sheets_extractor = SheetsPortfolioExtractor()
+    target_equities = sheets_extractor.fetch('B9:B100')['Ticker'].values
+
+    # load scanner 
     scanner = WheelScanner(
         uni_list=target_equities,
         num_processes=6,
@@ -34,9 +21,7 @@ if __name__ == '__main__':
     )
 
     # update target equities
-    portfolio_contracts = pd.read_csv('positions.csv')
-    portfolio_contracts = portfolio_contracts['contract'].values.tolist()
-    portfolio_contracts = [c.split(' ')[0] for c in portfolio_contracts]
+    portfolio_contracts = sheets_extractor.fetch('Main!G4:G100')['Ticker (F)'].values
     target_equities = list(set(target_equities) - set(portfolio_contracts))
 
     # get results
@@ -72,7 +57,6 @@ if __name__ == '__main__':
     df_filt['iv_percentile'] = df['udl_iv_percentile']
     df_filt['iv_skew'] = df['iv_skew']
     df_filt['target_ask'] = df['premium'] / 100.0
-    df_filt['target_qty'] = np.floor((balance * position_pp) / (df['be'] * 100.0))
     df_filt.index = df.index
 
     # filter top contracts
