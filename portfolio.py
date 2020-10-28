@@ -3,16 +3,7 @@ from datetime import datetime, date
 from tabulate import tabulate
 import pandas as pd
 import numpy as np
-
-
-# set constants
-portfolio_contracts = [
-    ['ROKU November 13 2020 $180 Put', 4.28, 1],
-    ['SNAP November 20 2020 $22 Put', 0.49, 4],
-    ['AAPL November 20 2020 $106.25 Put', 1.75, 1],
-    ['TWTR November 27 2020 $39 Put', 1.14, 3],
-    ['CAT November 20 2020 $155 Put', 2.74, 1]
-]
+import csv
 
 
 if __name__ == '__main__':
@@ -21,6 +12,10 @@ if __name__ == '__main__':
     portfolio_pl = 0
     max_portfolio_pl = 0
     cash_util = 0
+
+    # load contracts
+    portfolio_contracts = pd.read_csv('positions.csv')
+    portfolio_contracts = portfolio_contracts.values.tolist()
 
     # analyze contract data
     for contract in portfolio_contracts:

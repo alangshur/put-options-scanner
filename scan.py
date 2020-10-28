@@ -9,10 +9,19 @@ import os
 balance = 100100
 position_pp = 0.10
 target_equities = [
-    'AAPL', 'TWTR', 'SQ', 'SNAP', 'SHOP', 'ROKU', 'INTC', 'AMD', 'FB', 
-    'CAT', 'AMZN', 'TSLA', 'T', 'CSCO', 'CVS', 'VZ', 'BAC', 'C', 'KO', 
-    'TGT', 'PG', 'CLX', 'KMB', 'JNJ', 'TROW', 'F', 'WM', 'SYY', 'AFL', 
-    'WFC', 'GE', 'DB', 'DIS', 'NVDA'
+    'AAPL', 'TWTR', 'SNAP', 'SHOP', 'ROKU', 
+    'INTC', 'AMD', 'FB', 'CAT', 'AMZN', 
+    'TSLA', 'T', 'CSCO', 'CVS', 'VZ', 
+    'BAC', 'C', 'KO', 'TGT', 'PG', 
+    'CLX', 'KMB', 'JNJ', 'TROW', 'F', 
+    'WM', 'SYY', 'AFL', 'WFC', 'GE', 
+    'UAL', 'KR', 'MGM', 'UBER', 'NOK',
+    'PFE', 'TMUS', 'CLX', 'ADM', 'PEP',
+    'LEG', 'SPY', 'QQQ', 'XLF', 'SLV', 
+    'GLD', 'XLU', 'XLP', 'IWD', 'GDX',
+    'XLK', 'XLE', 'TLT', 'EEM', 'IAU',
+    'SCHF', 'VEA', 'SPYG', 'DB', 'DIS', 
+    'NVDA', 'AAL'
 ]
 
 
@@ -23,6 +32,12 @@ if __name__ == '__main__':
         save_scan=False,
         log_changes=True
     )
+
+    # update target equities
+    portfolio_contracts = pd.read_csv('positions.csv')
+    portfolio_contracts = portfolio_contracts['contract'].values.tolist()
+    portfolio_contracts = [c.split(' ')[0] for c in portfolio_contracts]
+    target_equities = list(set(target_equities) - set(portfolio_contracts))
 
     # get results
     data = np.array(sum(scanner.run()['results'].values(), []))
@@ -41,11 +56,9 @@ if __name__ == '__main__':
     # filter all contracts
     df['a_roc'] = (1.0 + df['roc']) ** (365.2425 / df['dte']) - 1.0
     df = df[df['be'] <= 200]
+    df = df[df['be_moneyness'] < 0.90]
     df = df[df['prob_be_delta'] >= 0.80]
-    df = df[df['a_roc'] >= 0.15]
-
-    def normalize(row):
-        return (row - row.min()) / (row.max() - row.min())
+    df = df[df['a_roc'] >= 0.25]
 
     # refine columns
     df_filt = pd.DataFrame().astype(np.float64)
@@ -53,7 +66,6 @@ if __name__ == '__main__':
     df_filt['roc'] = df['roc']
     df_filt['a_roc'] = df['a_roc']
     df_filt['be'] = df['be']
-    df_filt['score'] = normalize(df['a_roc']) * normalize(df['prob_be_delta'])
     df_filt['be_moneyness'] = df['be_moneyness']
     df_filt['prob_be_delta'] = df['prob_be_delta']
     df_filt['prob_be_iv'] = df['prob_be_iv']
@@ -67,7 +79,7 @@ if __name__ == '__main__':
     top_indices, top_results = [], []
     for equity in target_equities:
         df_result = df_filt[df_filt.index.str.startswith(equity + ' ')]
-        df_result = df_result.nlargest(1, 'score')
+        df_result = df_result.nlargest(1, 'prob_be_delta')
         if df_result.shape[0] == 1: 
             result = np.squeeze(df_result)
             top_indices.append(result.name)
@@ -77,6 +89,6 @@ if __name__ == '__main__':
     top_results.index = top_indices
 
     # output results
-    df_top = top_results.sort_values('score', ascending=False)
+    df_top = top_results.sort_values('prob_be_delta', ascending=False)
     formatted_df_top = tabulate(df_top, headers='keys', tablefmt='psql')
     print(formatted_df_top)
