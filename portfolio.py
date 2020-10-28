@@ -15,7 +15,7 @@ if __name__ == '__main__':
     cash_util = 0
 
     # load portfolio
-    portfolio_df = SheetsPortfolioExtractor().fetch()
+    portfolio_df = SheetsPortfolioExtractor().fetch('Main!G4:S100')
 
     # analyze contract data
     for _, contract in portfolio_df.iterrows():

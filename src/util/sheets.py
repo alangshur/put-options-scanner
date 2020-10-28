@@ -2,13 +2,15 @@ from googleapiclient.discovery import build
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 import pandas as pd
-import os.path
+import os
 import pickle
+from dotenv import load_dotenv
+load_dotenv(verbose=True)
 
 
 class SheetsPortfolioExtractor:
 
-    def fetch(self):
+    def fetch(self, sheet_range):
         
         # get cached credentials
         creds = None
@@ -23,7 +25,7 @@ class SheetsPortfolioExtractor:
             else:
                 flow = InstalledAppFlow.from_client_secrets_file(
                     'auth/credentials.json', 
-                    ['https://www.googleapis.com/auth/spreadsheets.readonly']
+                    [os.environ.get('SHEETS_API_ENDPOINT')]
                 )
                 creds = flow.run_local_server(port=0)
             with open('auth/token.pickle', 'wb') as token:
@@ -33,8 +35,8 @@ class SheetsPortfolioExtractor:
         service = build('sheets', 'v4', credentials=creds)
         sheet = service.spreadsheets()
         result = sheet.values().get(
-            spreadsheetId='1lPtN8ifWFq5uEc92CJCuZJoT2hiJoPdeP7x-GVSlEz4',
-            range='Main!G4:S100'
+            spreadsheetId=os.environ.get('PORTFOLIO_SHEET_ID'),
+            range=sheet_range
         ).execute()
 
         # create dataframe
