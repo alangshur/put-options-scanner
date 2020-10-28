@@ -1,3 +1,4 @@
+from src.util.sheets import SheetsPortfolioExtractor
 from src.api.tradier import TradierAPI
 from datetime import datetime, date
 from tabulate import tabulate
@@ -13,13 +14,14 @@ if __name__ == '__main__':
     max_portfolio_pl = 0
     cash_util = 0
 
-    # load contracts
-    portfolio_contracts = pd.read_csv('positions.csv')
-    portfolio_contracts = portfolio_contracts.values.tolist()
+    # load portfolio
+    portfolio_df = SheetsPortfolioExtractor().fetch()
 
     # analyze contract data
-    for contract in portfolio_contracts:
-        contract_string, sell_price, qty = contract
+    for _, contract in portfolio_df.iterrows():
+        contract_string = contract['Active Contract (F)']
+        sell_price = float(contract['Active Premium (F)'][1:]) / 100.0
+        qty = float(contract['Active Quantity (F)'])
         contract_comps = contract_string.split(' ')
 
         # get quotes
@@ -57,7 +59,7 @@ if __name__ == '__main__':
 
     # build dataframe
     df = pd.DataFrame(np.transpose(contract_data))
-    df.index = np.array(portfolio_contracts)[:, 0]
+    df.index = portfolio_df['Ticker (F)'].values
     df.columns = [
         'underlying_price ($)', 'contract_price ($)', 
         'dte', 'be ($)', 'moneyness (%)', 'status', 
@@ -66,7 +68,7 @@ if __name__ == '__main__':
 
     # print general stats
     print()
-    print('Portfolio size: {}'.format(len(portfolio_contracts)))
+    print('Portfolio size: {}'.format(portfolio_df.shape[0]))
     print('Realized portfolio p/l: {} USD'.format(round(portfolio_pl, 2)))
     print('Max portfolio p/l: {} USD'.format(round(max_portfolio_pl, 2)))
     print('Cash utilization: {} USD'.format(round(cash_util, 2)))
