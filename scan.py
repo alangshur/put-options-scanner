@@ -1,19 +1,21 @@
 from src.util.sheets import SheetsPortfolioExtractor
-from src.scanner.wheel import WheelScanner
+from src.scanner.wheelput import WheelPutScanner
+from src.scanner.wheelcall import WheelCallScanner
 from tabulate import tabulate
 import pandas as pd
 import numpy as np
+import argparse
 import os
 
 
-if __name__ == '__main__':
+def run_put_scanner():
 
     # fetch target equities
     sheets_extractor = SheetsPortfolioExtractor()
     target_equities = sheets_extractor.fetch('B9:B100')['Ticker'].values
 
     # load scanner 
-    scanner = WheelScanner(
+    scanner = WheelPutScanner(
         uni_list=target_equities,
         num_processes=6,
         save_scan=False,
@@ -26,9 +28,6 @@ if __name__ == '__main__':
 
     # get results
     data = np.array(sum(scanner.run()['results'].values(), []))
-    df = pd.DataFrame(data[:, 1:]).astype(np.float64)
-
-    # convert to dataframe
     df = pd.DataFrame(data[:, 1:]).astype(np.float64)
     df.index = data[:, 0]
     df.columns = [
@@ -48,6 +47,8 @@ if __name__ == '__main__':
     # refine columns
     df_filt = pd.DataFrame().astype(np.float64)
     df_filt['und'] = df['underlying']
+    df_filt['dte'] = df['dte']
+    df_filt['premium'] = df['premium']
     df_filt['roc'] = df['roc']
     df_filt['a_roc'] = df['a_roc']
     df_filt['be'] = df['be']
@@ -76,3 +77,79 @@ if __name__ == '__main__':
     df_top = top_results.sort_values('prob_be_delta', ascending=False)
     formatted_df_top = tabulate(df_top, headers='keys', tablefmt='psql')
     print(formatted_df_top)
+
+
+def run_call_scanner(put_contract):
+
+    # fetch contract stats
+    sheets_extractor = SheetsPortfolioExtractor()
+    portfolio_df = sheets_extractor.fetch('Main!G4:S100')
+    contract = portfolio_df[portfolio_df['Active Contract (F)'] == put_contract]
+    put_ticker = put_contract.split(' ')[0]
+    put_strike = float(put_contract.split(' ')[4][1:])
+    cost_basis = float(contract.iloc[0]['Cost Basis (F)'][1:])
+
+    # load scanner
+    scanner = WheelCallScanner(
+        put_ticker=put_ticker,
+        put_strike=put_strike,
+        cost_basis=cost_basis,
+        save_scan=False
+    )
+
+    # get results
+    data = np.array(scanner.run()['results'])
+    df = pd.DataFrame(data[:, 1:]).astype(np.float64)
+    df.index = data[:, 0]
+    df.columns = [
+        'underlying', 'premium', 'dte', 'roc',
+        'updated_basis', 'underlying_gain', 
+        'moneyness', 'prob_itm_delta',
+        'prob_itm_iv', 'iv' 
+    ]
+
+    # filter results
+    df['adj_payout'] = df['premium'] + df['underlying_gain'] * df['prob_itm_delta']
+    df = df[df['adj_payout'] > 0.0]
+
+    # refine columns
+    df_filt = pd.DataFrame().astype(np.float64)
+    df_filt['underlying'] = df['underlying']
+    df_filt['dte'] = df['dte']
+    df_filt['premium'] = df['premium']
+    df_filt['updated_basis'] = df['updated_basis']
+    df_filt['roc'] = df['roc']
+    df_filt['a_roc'] = (1.0 + df['roc']) ** (365.2425 / df['dte']) - 1.0
+    df_filt['adj_a_roc'] = (1.0 + (df['adj_payout'] / (put_strike * 100.0))) ** (365.2425 / df['dte']) - 1.0
+    df_filt['underlying_gain'] = df['underlying_gain']
+    df_filt['prob_itm_delta'] = df['prob_itm_delta']
+    df_filt['prob_itm_iv'] = df['prob_itm_iv']
+    df_filt['target_ask'] = df['premium'] / 100.0
+    df_filt.index = df.index
+
+    # output results
+    df_top = df_filt.sort_values('adj_a_roc', ascending=False)
+    formatted_df_top = tabulate(df_top, headers='keys', tablefmt='psql')
+    print(formatted_df_top)
+
+
+if __name__ == '__main__':
+
+    # build arg parser
+    parser = argparse.ArgumentParser(description='Run scanner for puts and calls.')
+    parser.add_argument('direction', 
+        type=str,
+        choices=['put', 'call'],
+        help='The option type direction in which to aim the scan.'
+    )
+    parser.add_argument('--pcontract', 
+        type=str,
+        help='The name of the original put contract to scan calls for.'
+    )
+
+    # run scanner
+    args = parser.parse_args()
+    if (args.direction == 'call') and args.pcontract is None:
+        parser.error("direction of type \"call\" requires --pcontract.")
+    if args.direction == 'put': run_put_scanner()
+    elif args.direction == 'call': run_call_scanner(args.pcontract)

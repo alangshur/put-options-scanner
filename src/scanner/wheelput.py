@@ -26,7 +26,7 @@ import sys
 import os
 
 
-class WheelScanner(ScannerBase):
+class WheelPutScanner(ScannerBase):
 
     def __init__(self, 
         uni_list=None, 
@@ -59,7 +59,7 @@ class WheelScanner(ScannerBase):
 
         # build scan name
         if self.scan_name is None:
-            k = 'wheel'
+            k = 'wheelput'
             d = str(datetime.today()).split(' ')[0]
             t = str(datetime.today()).split(' ')[-1].split('.')[0]
             self.scan_name = '{}_{}_{}'.format(k, d, t)
@@ -481,7 +481,7 @@ class WheelScannerWorkerProcess(multiprocessing.Process):
             premium = level['bid']
             be = level['strike'] - premium
             prob_be_delta = 1 - self.__interpolate_delta(be, coefs)
-            roc = (premium * 100) / (be * 100)
+            roc = (premium * 100) / (level['strike'] * 100)
             
             # calculate movement
             iv = greeks_lookup[level['description']]['iv']

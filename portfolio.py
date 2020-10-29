@@ -19,9 +19,10 @@ if __name__ == '__main__':
 
     # analyze contract data
     for _, contract in portfolio_df.iterrows():
+        if contract['Stage (F)'] == 'Done': continue
         contract_string = contract['Active Contract (F)']
-        sell_price = float(contract['Active Premium (F)'][1:]) / 100.0
         qty = float(contract['Active Quantity (F)'])
+        sell_price = float(contract['Active Premium (F)'][1:]) / 100.0 / qty
         contract_comps = contract_string.split(' ')
 
         # get quotes
