@@ -23,7 +23,9 @@ def run_put_scanner():
     )
 
     # update target equities
-    portfolio_contracts = sheets_extractor.fetch('Main!G4:G100')['Ticker (F)'].values
+    portfolio_df = sheets_extractor.fetch('Main!G5:V100')
+    portfolio_df = portfolio_df[portfolio_df['Stage (F)'] != 'Done']
+    portfolio_contracts = portfolio_df['Ticker (F)'].values
     target_equities = list(set(target_equities) - set(portfolio_contracts))
 
     # get results
@@ -42,7 +44,7 @@ def run_put_scanner():
     df = df[df['be'] <= 200]
     df = df[df['be_moneyness'] < 0.90]
     df = df[df['prob_be_delta'] >= 0.80]
-    df = df[df['a_roc'] >= 0.25]
+    df = df[df['a_roc'] >= 0.20]
 
     # refine columns
     df_filt = pd.DataFrame().astype(np.float64)
@@ -83,7 +85,7 @@ def run_call_scanner(put_contract):
 
     # fetch contract stats
     sheets_extractor = SheetsPortfolioExtractor()
-    portfolio_df = sheets_extractor.fetch('Main!G4:S100')
+    portfolio_df = sheets_extractor.fetch('Main!G5:V100')
     contract = portfolio_df[portfolio_df['Active Contract (F)'] == put_contract]
     put_ticker = put_contract.split(' ')[0]
     put_strike = float(put_contract.split(' ')[4][1:])
@@ -139,7 +141,6 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Run scanner for puts and calls.')
     parser.add_argument('direction', 
         type=str,
-        choices=['put', 'call'],
         help='The option type direction in which to aim the scan.'
     )
     parser.add_argument('--pcontract', 
@@ -149,7 +150,8 @@ if __name__ == '__main__':
 
     # run scanner
     args = parser.parse_args()
-    if (args.direction == 'call') and args.pcontract is None:
-        parser.error("direction of type \"call\" requires --pcontract.")
-    if args.direction == 'put': run_put_scanner()
-    elif args.direction == 'call': run_call_scanner(args.pcontract)
+    if (args.direction in ['call', 'c', 'calls']) and args.pcontract is None:
+        parser.error('direction of type \"call\" requires --pcontract.')
+    if args.direction.lower() in ['put', 'p', 'puts']: run_put_scanner()
+    elif args.direction.lower() in ['call', 'c', 'calls']: run_call_scanner(args.pcontract)
+    else: parser.error('invalid choice of direction, choose from [put/call].')

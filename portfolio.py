@@ -15,14 +15,14 @@ if __name__ == '__main__':
     cash_util = 0
 
     # load portfolio
-    portfolio_df = SheetsPortfolioExtractor().fetch('Main!G4:S100')
+    portfolio_df = SheetsPortfolioExtractor().fetch('Main!G5:V100')
+    portfolio_df = portfolio_df[portfolio_df['Stage (F)'] != 'Done']
 
     # analyze contract data
     for _, contract in portfolio_df.iterrows():
-        if contract['Stage (F)'] == 'Done': continue
-        contract_string = contract['Active Contract (F)']
-        qty = float(contract['Active Quantity (F)'])
-        sell_price = float(contract['Active Premium (F)'][1:]) / 100.0 / qty
+        contract_string = contract['Contract (F)']
+        qty = float(contract['Quantity (F)'])
+        sell_price = float(contract['Premium'][1:]) / 100.0 / qty
         contract_comps = contract_string.split(' ')
 
         # get quotes
