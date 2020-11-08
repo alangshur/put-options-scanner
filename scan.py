@@ -8,7 +8,7 @@ import argparse
 import os
 
 
-def run_put_scanner():
+def run_put_scanner(ignore_active_tickers=False):
 
     # fetch target equities
     sheets_extractor = SheetsPortfolioExtractor()
@@ -18,18 +18,23 @@ def run_put_scanner():
     scanner = WheelPutScanner(
         uni_list=target_equities,
         num_processes=6,
+        price_cap=250.0,
         save_scan=False,
         log_changes=True
     )
 
     # update target equities
-    portfolio_df = sheets_extractor.fetch('Main!G5:V100')
-    portfolio_df = portfolio_df[portfolio_df['Stage (F)'] != 'Done']
-    portfolio_contracts = portfolio_df['Ticker (F)'].values
-    target_equities = list(set(target_equities) - set(portfolio_contracts))
+    if ignore_active_tickers:
+        portfolio_df = sheets_extractor.fetch('Main!G5:V100')
+        portfolio_df = portfolio_df[portfolio_df['Stage (F)'] != 'Done']
+        portfolio_contracts = portfolio_df['Ticker (F)'].values
+        target_equities = list(set(target_equities) - set(portfolio_contracts))
 
     # get results
     data = np.array(sum(scanner.run()['results'].values(), []))
+    if data.shape[0] == 0:
+        print('No matching puts.')
+        return
     df = pd.DataFrame(data[:, 1:]).astype(np.float64)
     df.index = data[:, 0]
     df.columns = [
@@ -41,10 +46,10 @@ def run_put_scanner():
 
     # filter all contracts
     df['a_roc'] = (1.0 + df['roc']) ** (365.2425 / df['dte']) - 1.0
-    df = df[df['be'] <= 200]
-    df = df[df['be_moneyness'] < 0.90]
+    df = df[df['be'] <= 250]
+    df = df[df['be_moneyness'] < 0.95]
     df = df[df['prob_be_delta'] >= 0.80]
-    df = df[df['a_roc'] >= 0.20]
+    df = df[df['a_roc'] >= 0.15]
 
     # refine columns
     df_filt = pd.DataFrame().astype(np.float64)

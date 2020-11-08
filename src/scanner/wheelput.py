@@ -31,6 +31,7 @@ class WheelPutScanner(ScannerBase):
     def __init__(self, 
         uni_list=None, 
         uni_file=None,
+        price_cap=None,
         num_processes=6,
         save_scan=True,
         log_changes=True,
@@ -40,6 +41,7 @@ class WheelPutScanner(ScannerBase):
 
         self.uni_list = uni_list
         self.uni_file = uni_file
+        self.price_cap = price_cap
         self.num_processes = num_processes
         self.save_scan = save_scan
         self.log_changes = log_changes
@@ -107,6 +109,7 @@ class WheelPutScanner(ScannerBase):
                 fetch_failure_counter=fetch_failure_counter,
                 analysis_failure_counter=analysis_failure_counter,
                 log_queue=log_queue,
+                price_cap=self.price_cap,
                 risk_free_rate=risk_free_rate,
                 manual_greeks=self.manual_greeks
             )
@@ -201,6 +204,7 @@ class WheelScannerWorkerProcess(multiprocessing.Process):
         fetch_failure_counter,
         analysis_failure_counter,
         log_queue,
+        price_cap,
         risk_free_rate,
         manual_greeks,
 
@@ -226,6 +230,7 @@ class WheelScannerWorkerProcess(multiprocessing.Process):
         self.fetch_failure_counter = fetch_failure_counter
         self.analysis_failure_counter = analysis_failure_counter
         self.log_queue=log_queue
+        self.price_cap = price_cap
         self.risk_free_rate = risk_free_rate
         self.manual_greeks = manual_greeks
 
@@ -263,6 +268,7 @@ class WheelScannerWorkerProcess(multiprocessing.Process):
             return
 
         # fetch dividend
+        if not self.__validate_underlying(underlying): return
         if self.manual_greeks: 
             dividend = self.dividend_api.fetch_annual_yield(symbol)
         else: dividend = 0.0
@@ -325,6 +331,13 @@ class WheelScannerWorkerProcess(multiprocessing.Process):
 
         # ignore toronto exchange
         if symbol.endswith('.TO'): return False
+        else: return True
+
+    def __validate_underlying(self, underlying):
+
+        # cap stock prices
+        if self.price_cap is None: return True
+        if underlying > self.price_cap: return False
         else: return True
 
     def __validate_expiration(self, expiration):

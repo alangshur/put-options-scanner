@@ -60,7 +60,7 @@ if __name__ == '__main__':
 
     # build dataframe
     df = pd.DataFrame(np.transpose(contract_data))
-    df.index = portfolio_df['Ticker (F)'].values
+    df.index = portfolio_df['Contract (F)'].values
     df.columns = [
         'underlying_price ($)', 'contract_price ($)', 
         'dte', 'be ($)', 'moneyness (%)', 'status', 
