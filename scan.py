@@ -12,20 +12,20 @@ def run_put_scanner(ignore_active_tickers=False):
 
     # fetch target equities
     sheets_extractor = SheetsPortfolioExtractor()
-    target_equities = sheets_extractor.fetch('B9:B100')['Ticker'].values
+    target_equities = sheets_extractor.fetch('Target!B4:B1000')['Ticker'].values
 
     # load scanner 
     scanner = WheelPutScanner(
         uni_list=target_equities,
         num_processes=6,
-        price_cap=250.0,
+        price_cap=300.0,
         save_scan=False,
         log_changes=True
     )
 
     # update target equities
     if ignore_active_tickers:
-        portfolio_df = sheets_extractor.fetch('Main!G5:V100')
+        portfolio_df = sheets_extractor.fetch('Positions!B5:Q1000')
         portfolio_df = portfolio_df[portfolio_df['Stage (F)'] != 'Done']
         portfolio_contracts = portfolio_df['Ticker (F)'].values
         target_equities = list(set(target_equities) - set(portfolio_contracts))
@@ -38,20 +38,19 @@ def run_put_scanner(ignore_active_tickers=False):
     df = pd.DataFrame(data[:, 1:]).astype(np.float64)
     df.index = data[:, 0]
     df.columns = [
-        'underlying', 'premium', 'dte', 'roc', 'be', 'be_moneyness', 
-        'prob_be_delta', 'prob_be_iv', 'iv', 'iv_skew',
+        'underlying', 'premium', 'dte', 'roc', 'be', 'be_moneyness',
+        'prob_itm_delta', 'prob_be_delta', 'prob_be_iv', 'iv', 'iv_skew',
         'udl_year_ret', 'udl_year_ret_r2', 'udl_year_market_corr', 'udl_hist_vol', 
         'udl_iv_percentile', 'udl_hv_percentile', 'above_be_percentile'
     ]
 
     # filter all contracts
+    df['prob_itm_delta'] = np.abs(df['prob_itm_delta'])
     df['a_roc'] = (1.0 + df['roc']) ** (365.2425 / df['dte']) - 1.0
-    df = df[df['be'] <= 250]
-    df = df[df['be_moneyness'] < 0.95]
-    df = df[df['prob_be_delta'] >= 0.80]
-    df = df[df['a_roc'] >= 0.15]
+    df = df[df['a_roc'] >= 0.20]
 
     # refine columns
+    norm = lambda x: (x - x.min()) / (x.max() - x.min())
     df_filt = pd.DataFrame().astype(np.float64)
     df_filt['und'] = df['underlying']
     df_filt['dte'] = df['dte']
@@ -60,8 +59,7 @@ def run_put_scanner(ignore_active_tickers=False):
     df_filt['a_roc'] = df['a_roc']
     df_filt['be'] = df['be']
     df_filt['be_moneyness'] = df['be_moneyness']
-    df_filt['prob_be_delta'] = df['prob_be_delta']
-    df_filt['prob_be_iv'] = df['prob_be_iv']
+    df_filt['prob_itm_delta'] = df['prob_itm_delta']
     df_filt['iv_percentile'] = df['udl_iv_percentile']
     df_filt['iv_skew'] = df['iv_skew']
     df_filt['target_ask'] = df['premium'] / 100.0
@@ -71,7 +69,7 @@ def run_put_scanner(ignore_active_tickers=False):
     top_indices, top_results = [], []
     for equity in target_equities:
         df_result = df_filt[df_filt.index.str.startswith(equity + ' ')]
-        df_result = df_result.nlargest(1, 'prob_be_delta')
+        df_result = df_result.nsmallest(1, 'prob_itm_delta')
         if df_result.shape[0] == 1: 
             result = np.squeeze(df_result)
             top_indices.append(result.name)
@@ -81,7 +79,63 @@ def run_put_scanner(ignore_active_tickers=False):
     top_results.index = top_indices
 
     # output results
-    df_top = top_results.sort_values('prob_be_delta', ascending=False)
+    df_top = top_results.sort_values('prob_itm_delta', ascending=True)
+    formatted_df_top = tabulate(df_top, headers='keys', tablefmt='psql')
+    print(formatted_df_top)
+
+
+def run_focus_put_scanner(symbol):
+
+    # load scanner 
+    scanner = WheelPutScanner(
+        uni_list=[symbol],
+        num_processes=6,
+        price_cap=250.0,
+        save_scan=False,
+        log_changes=True
+    )
+
+    # get results
+    data = np.array(sum(scanner.run()['results'].values(), []))
+    if data.shape[0] == 0:
+        print('No matching puts.')
+        return
+    df = pd.DataFrame(data[:, 1:]).astype(np.float64)
+    df.index = data[:, 0]
+    df.columns = [
+        'underlying', 'premium', 'dte', 'roc', 'be', 'be_moneyness', 
+        'prob_itm_delta', 'prob_be_delta', 'prob_be_iv', 'iv', 'iv_skew',
+        'udl_year_ret', 'udl_year_ret_r2', 'udl_year_market_corr', 'udl_hist_vol', 
+        'udl_iv_percentile', 'udl_hv_percentile', 'above_be_percentile'
+    ]
+
+    # filter all contracts
+    df['a_roc'] = (1.0 + df['roc']) ** (365.2425 / df['dte']) - 1.0
+    df = df[df['be'] <= 250]
+    df = df[df['a_roc'] >= 0.25]
+
+    # refine columns
+    norm = lambda x: (x - x.min()) / (x.max() - x.min())
+    df_filt = pd.DataFrame().astype(np.float64)
+    df_filt['und'] = df['underlying']
+    df_filt['dte'] = df['dte']
+    df_filt['premium'] = df['premium']
+    df_filt['roc'] = df['roc']
+    df_filt['a_roc'] = df['a_roc']
+    df_filt['be'] = df['be']
+    df_filt['be_moneyness'] = df['be_moneyness']
+    df_filt['prob_itm_delta'] = np.abs(df['prob_itm_delta'])
+    df_filt['prob_be_delta'] = df['prob_be_delta']
+    df_filt['prob_be_iv'] = df['prob_be_iv']
+    df_filt['iv_percentile'] = df['udl_iv_percentile']
+    df_filt['iv_skew'] = df['iv_skew']
+    df_filt['target_ask'] = df['premium'] / 100.0
+    df_filt['score'] = ((1 - norm(df_filt['a_roc'])) ** 2) * (norm(df_filt['prob_itm_delta']) ** 2)
+    df_filt.index = df.index
+
+    # output results
+    df_top = df_filt.sort_values('score', ascending=True)
+    df_top = df_top.drop(['score'], axis=1)
     formatted_df_top = tabulate(df_top, headers='keys', tablefmt='psql')
     print(formatted_df_top)
 
@@ -90,8 +144,8 @@ def run_call_scanner(put_contract):
 
     # fetch contract stats
     sheets_extractor = SheetsPortfolioExtractor()
-    portfolio_df = sheets_extractor.fetch('Main!G5:V100')
-    contract = portfolio_df[portfolio_df['Active Contract (F)'] == put_contract]
+    portfolio_df = sheets_extractor.fetch('Positions!B5:Q1000')
+    contract = portfolio_df[portfolio_df['Contract (F)'] == put_contract]
     put_ticker = put_contract.split(' ')[0]
     put_strike = float(put_contract.split(' ')[4][1:])
     cost_basis = float(contract.iloc[0]['Cost Basis (F)'][1:])
@@ -152,11 +206,14 @@ if __name__ == '__main__':
         type=str,
         help='The name of the original put contract to scan calls for.'
     )
+    parser.add_argument('--focus', 
+        type=str,
+        help='The name of the target symbol for focused put contract search.'
+    )
 
     # run scanner
     args = parser.parse_args()
-    if (args.direction in ['call', 'c', 'calls']) and args.pcontract is None:
-        parser.error('direction of type \"call\" requires --pcontract.')
-    if args.direction.lower() in ['put', 'p', 'puts']: run_put_scanner()
-    elif args.direction.lower() in ['call', 'c', 'calls']: run_call_scanner(args.pcontract)
-    else: parser.error('invalid choice of direction, choose from [put/call].')
+    if args.direction.lower() in ['put', 'p', 'puts'] and args.focus: run_focus_put_scanner(args.focus)
+    elif args.direction.lower() in ['put', 'p', 'puts']: run_put_scanner()
+    elif args.direction.lower() in ['call', 'c', 'calls'] and args.pcontract: run_call_scanner(args.pcontract)
+    else: parser.error('invalid combination, choose from [put/call] with valid additional argument.')

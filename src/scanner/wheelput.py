@@ -493,6 +493,7 @@ class WheelScannerWorkerProcess(multiprocessing.Process):
             # calculate contract stats
             premium = level['bid']
             be = level['strike'] - premium
+            prob_itm_delta = greeks_lookup[level['description']]['delta']
             prob_be_delta = 1 - self.__interpolate_delta(be, coefs)
             roc = (premium * 100) / (level['strike'] * 100)
             
@@ -512,6 +513,7 @@ class WheelScannerWorkerProcess(multiprocessing.Process):
                 round(roc, 5), # return-on-capital
                 round(be, 2), # break-even price
                 round(moneyness, 5), # break-even moneyness
+                round(prob_itm_delta, 5), # probability of itm (with delta)
                 round(prob_be_delta, 5), # probability of break-even (with delta) 
                 round(prob_be_iv, 5), # probability of break-even (with iv)
                 round(iv, 5), # contract implied volatility (percentage)

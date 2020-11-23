@@ -8,14 +8,15 @@ import csv
 
 
 if __name__ == '__main__':
-    contract_data = [[], [], [], [], [], [], [], []] 
+    contract_data = [[], [], [], [], [], [], [], [], []] 
     api = TradierAPI()
     portfolio_pl = 0
     max_portfolio_pl = 0
     cash_util = 0
 
     # load portfolio
-    portfolio_df = SheetsPortfolioExtractor().fetch('Main!G5:V100')
+    sheets_extractor = SheetsPortfolioExtractor()
+    portfolio_df = sheets_extractor.fetch('Positions!B5:Q1000')
     portfolio_df = portfolio_df[portfolio_df['Stage (F)'] != 'Done']
 
     # analyze contract data
@@ -52,6 +53,7 @@ if __name__ == '__main__':
         pl = (sell_price - contract_query['ask']) * 100 * qty
         contract_data[6].append(ret)
         contract_data[7].append(pl)
+        contract_data[8].append(contract_query['ask'])
 
         # update general stats
         portfolio_pl += pl
@@ -64,7 +66,7 @@ if __name__ == '__main__':
     df.columns = [
         'underlying_price ($)', 'contract_price ($)', 
         'dte', 'be ($)', 'moneyness (%)', 'status', 
-        'return (%)', 'p/l ($)'
+        'return (%)', 'p/l ($)', 'target_ask ($)'
     ]
 
     # print general stats
