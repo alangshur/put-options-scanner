@@ -16,7 +16,7 @@ if __name__ == '__main__':
 
     # load portfolio
     sheets_extractor = SheetsPortfolioExtractor()
-    portfolio_df = sheets_extractor.fetch('Positions!B5:Q1000')
+    portfolio_df = sheets_extractor.fetch('\'Active Positions\'!B5:Q1000')
     portfolio_df = portfolio_df[portfolio_df['Stage (F)'] != 'Done']
 
     # analyze contract data

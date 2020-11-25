@@ -502,7 +502,7 @@ class WheelScannerWorkerProcess(multiprocessing.Process):
             iv_skew = iv / atm_iv
             std = underlying * atm_iv * np.sqrt(dte / 365)
             prob_be_iv = 1 - norm.cdf((be - underlying) / std)
-            moneyness = be / underlying
+            moneyness = level['strike'] / underlying
 
             # save contract
             contract_collection.append([
@@ -512,7 +512,7 @@ class WheelScannerWorkerProcess(multiprocessing.Process):
                 round(dte, 0), # days to expiration
                 round(roc, 5), # return-on-capital
                 round(be, 2), # break-even price
-                round(moneyness, 5), # break-even moneyness
+                round(moneyness, 5), # strike moneyness
                 round(prob_itm_delta, 5), # probability of itm (with delta)
                 round(prob_be_delta, 5), # probability of break-even (with delta) 
                 round(prob_be_iv, 5), # probability of break-even (with iv)
