@@ -12,7 +12,25 @@ def run_put_scanner(ignore_active_tickers=False):
 
     # fetch target equities
     sheets_extractor = SheetsPortfolioExtractor()
-    target_equities = sheets_extractor.fetch('\'Target Tickers\'!B4:B1000')['Ticker'].values
+    target_matrix = sheets_extractor.fetch('\'Target Tickers\'!B4:P1000')
+    target_equities = target_matrix['Ticker'].values
+
+    # get analyst forecasts
+    forecast_df = target_matrix[[
+        '12M High Forecast',
+        '12M Median Forecast',
+        '12M Low Forecast'
+    ]]
+    forecast_df.index = target_equities
+    forecast_df = forecast_df.replace('N/A', np.nan, regex=True)
+    forecast_df = forecast_df.replace('[\$,]', '', regex=True).astype(float)
+
+    # update target equities
+    if ignore_active_tickers:
+        portfolio_df = sheets_extractor.fetch('\'Active Positions\'!B5:Q1000')
+        portfolio_df = portfolio_df[portfolio_df['Stage (F)'] != 'Done']
+        portfolio_contracts = portfolio_df['Ticker'].values
+        target_equities = list(set(target_equities) - set(portfolio_contracts))
 
     # load scanner 
     scanner = WheelPutScanner(
@@ -22,13 +40,6 @@ def run_put_scanner(ignore_active_tickers=False):
         save_scan=False,
         log_changes=True
     )
-
-    # update target equities
-    if ignore_active_tickers:
-        portfolio_df = sheets_extractor.fetch('\'Active Positions\'!B5:Q1000')
-        portfolio_df = portfolio_df[portfolio_df['Stage (F)'] != 'Done']
-        portfolio_contracts = portfolio_df['Ticker'].values
-        target_equities = list(set(target_equities) - set(portfolio_contracts))
 
     # get results
     data = np.array(sum(scanner.run()['results'].values(), []))
@@ -52,13 +63,13 @@ def run_put_scanner(ignore_active_tickers=False):
     # refine columns
     norm = lambda x: (x - x.min()) / (x.max() - x.min())
     df_filt = pd.DataFrame().astype(np.float64)
+    df_filt['target_ask ($)'] = round(df['premium'] / 100.0, 2)
     df_filt['underlying ($)'] = round(df['underlying'], 3)
     df_filt['dte (D)'] = df['dte']
     df_filt['score (%)'] = round(df['a_roc'] * (1 - norm(df['prob_itm_delta'])), 3)
     df_filt['a_roc (%)'] = round(df['a_roc'], 3)
     df_filt['moneyness (%)'] = round(df['moneyness'], 3)
     df_filt['prob_itm (%)'] = round(df['prob_itm_delta'] * 100, 3)
-    df_filt['target_ask ($)'] = round(df['premium'] / 100.0, 2)
     df_filt.index = df.index
 
     # filter top contracts
@@ -73,6 +84,17 @@ def run_put_scanner(ignore_active_tickers=False):
     top_results = pd.DataFrame(top_results)
     top_results.columns = df_filt.columns
     top_results.index = top_indices
+
+    # incorporate analyst metrics
+    strikes = np.array([float(idx.split(' ')[4][1:]) for idx in top_indices]).reshape((-1, 1))
+    tickers = [str(idx.split(' ')[0]) for idx in top_indices]
+    forecast_df = forecast_df.loc[tickers]
+    forecast_df -= np.broadcast_to(strikes, (strikes.shape[0], 3))
+    forecast_df /= np.broadcast_to(strikes, (strikes.shape[0], 3))
+    top_results['rel_hi_fc (%)'] = np.round(100 * forecast_df.iloc[:, 0].values, 3)
+    top_results['rel_mdn_fc (%)'] = np.round(100 * forecast_df.iloc[:, 1].values, 3)
+    top_results['rel_lo_fc (%)'] = np.round(forecast_df.iloc[:, 2].values, 3)
+    top_results = top_results.replace(np.nan, "N/A", regex=True)
 
     # output results
     df_top = top_results.sort_values('prob_itm (%)', ascending=True)
