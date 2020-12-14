@@ -8,7 +8,10 @@ import argparse
 import os
 
 
-def run_put_scanner(ignore_active_tickers=False, aroc_limit=0.3):
+def run_put_scanner(
+                    ignore_active_tickers=False, 
+                    aroc_limit=0.3,
+                    prob_itm_limit=0.3):
 
     # fetch target equities
     sheets_extractor = SheetsPortfolioExtractor()
@@ -59,14 +62,18 @@ def run_put_scanner(ignore_active_tickers=False, aroc_limit=0.3):
     df['prob_itm_delta'] = np.abs(df['prob_itm_delta'])
     df['a_roc'] = (1.0 + df['roc']) ** (365.2425 / df['dte']) - 1.0
     df = df[df['a_roc'] >= aroc_limit]
+    df = df[df['prob_itm_delta'] > prob_itm_limit]
+
+    min_score = aroc_limit * (1 - prob_itm_limit)
+    max_score = 0.5 * (1 - 0.1)
+    norm = lambda x: (x - x.min()) / (x.max() - x.min())
 
     # refine columns
-    norm = lambda x: (x - x.min()) / (x.max() - x.min())
     df_filt = pd.DataFrame().astype(np.float64)
     df_filt['target_ask ($)'] = round(df['premium'] / 100.0, 2)
     df_filt['underlying ($)'] = round(df['underlying'], 3)
     df_filt['dte (D)'] = df['dte']
-    df_filt['score (%)'] = round(df['a_roc'] * (1 - norm(df['prob_itm_delta'])), 3)
+    df_filt['score (%)'] = round(100 * (df['a_roc'] * (1 - df['prob_itm_delta']) - min_score) / (max_score - min_score), 3)
     df_filt['a_roc (%)'] = round(df['a_roc'], 3)
     df_filt['moneyness (%)'] = round(df['moneyness'], 3)
     df_filt['prob_itm (%)'] = round(df['prob_itm_delta'] * 100, 3)
