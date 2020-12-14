@@ -55,10 +55,14 @@ if __name__ == '__main__':
         contract_data[7].append(pl)
         contract_data[8].append(contract_query['ask'])
 
+        # get tied-up capital
+        tuc = contract['Tied-Up Capital (F)'][1:-3]
+        tuc = int(tuc.replace(',', ''))
+
         # update general stats
-        portfolio_pl += pl
+        if contract_comps[5] == 'Put': portfolio_pl += pl
         max_portfolio_pl += sell_price * 100 * qty
-        cash_util += strike * 100 * qty
+        cash_util += tuc
 
     # build dataframe
     df = pd.DataFrame(np.transpose(contract_data))

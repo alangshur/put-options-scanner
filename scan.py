@@ -8,7 +8,7 @@ import argparse
 import os
 
 
-def run_put_scanner(ignore_active_tickers=False):
+def run_put_scanner(ignore_active_tickers=False, aroc_limit=0.3):
 
     # fetch target equities
     sheets_extractor = SheetsPortfolioExtractor()
@@ -32,7 +32,7 @@ def run_put_scanner(ignore_active_tickers=False):
         portfolio_contracts = portfolio_df['Ticker'].values
         target_equities = list(set(target_equities) - set(portfolio_contracts))
 
-    # load scanner 
+    # load scanner
     scanner = WheelPutScanner(
         uni_list=target_equities,
         num_processes=6,
@@ -58,7 +58,7 @@ def run_put_scanner(ignore_active_tickers=False):
     # filter all contracts
     df['prob_itm_delta'] = np.abs(df['prob_itm_delta'])
     df['a_roc'] = (1.0 + df['roc']) ** (365.2425 / df['dte']) - 1.0
-    df = df[df['a_roc'] >= 0.20]
+    df = df[df['a_roc'] >= aroc_limit]
 
     # refine columns
     norm = lambda x: (x - x.min()) / (x.max() - x.min())
@@ -129,7 +129,7 @@ def run_focus_put_scanner(symbol):
 
     # filter all contracts
     df['a_roc'] = (1.0 + df['roc']) ** (365.2425 / df['dte']) - 1.0
-    df = df[df['a_roc'] >= 0.20]
+    df = df[df['a_roc'] >= 0.30]
 
     # refine columns
     norm = lambda x: (x - x.min()) / (x.max() - x.min())
