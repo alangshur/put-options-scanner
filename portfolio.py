@@ -7,6 +7,14 @@ import numpy as np
 import csv
 
 
+def num_to_float(num):
+    if '$' in num: num = num[1:]
+    if '.' in num: num = num[:-3]
+    num = num.replace(',', '')
+    num = float(num)
+    return num
+
+
 if __name__ == '__main__':
     contract_data = [[], [], [], [], [], [], [], [], []] 
     api = TradierAPI()
@@ -22,8 +30,8 @@ if __name__ == '__main__':
     # analyze contract data
     for _, contract in portfolio_df.iterrows():
         contract_string = contract['Contract (F)']
-        qty = float(contract['Quantity (F)'])
-        sell_price = float(contract['Premium'][1:]) / 100.0 / qty
+        qty = num_to_float(contract['Quantity (F)'])
+        sell_price = num_to_float(contract['Premium']) / 100.0 / qty
         contract_comps = contract_string.split(' ')
 
         # get quotes
@@ -38,7 +46,7 @@ if __name__ == '__main__':
         contract_data[2].append(dte)
 
         # get strike
-        strike = float(contract_comps[4][1:])
+        strike = num_to_float(contract_comps[4])
         moneyness = strike / underlying_quote
         if np.abs(1.0 - moneyness) <= 0.015: moneyness_status = 'ATM'
         elif contract_comps[5] == 'Put' and moneyness < 1.0: moneyness_status = 'OTM'
@@ -56,8 +64,7 @@ if __name__ == '__main__':
         contract_data[8].append(contract_query['ask'])
 
         # get tied-up capital
-        tuc = contract['Tied-Up Capital (F)'][1:-3]
-        tuc = int(tuc.replace(',', ''))
+        tuc = num_to_float(contract['Tied-Up Capital (F)'])
 
         # update general stats
         if contract_comps[5] == 'Put': portfolio_pl += pl
