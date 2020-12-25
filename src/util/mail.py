@@ -38,12 +38,12 @@ class MailTextSender:
         message['To'] = self.receiver_email
 
         # compile text
-        text_plain = MIMEText(text, 'plain')
+        text_plain = MIMEText('\n\n' + text + '  ', 'plain')
         message.attach(text_plain)
 
         # send message
-        server.sendmail(
-            sender_email, 
-            receiver_email, 
+        self.server.sendmail(
+            self.sender_email, 
+            self.receiver_email, 
             message.as_string()
         )

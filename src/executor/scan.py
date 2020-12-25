@@ -4,6 +4,7 @@ from src.scanner.wheelcall import WheelCallScanner
 from tabulate import tabulate
 import pandas as pd
 import numpy as np
+import os
 
 
 class ScanExecutor:
@@ -12,7 +13,10 @@ class ScanExecutor:
                     ignore_active_tickers=False, 
                     aroc_limit=0.3,
                     prob_itm_limit=0.3,
-                    return_results=False):
+                    print_results=True,
+                    refresh_results=False,
+                    return_results=False,
+                    **scan_kwargs):
 
         # fetch target equities
         sheets_extractor = SheetsPortfolioExtractor()
@@ -42,7 +46,8 @@ class ScanExecutor:
             num_processes=6,
             price_cap=300.0,
             save_scan=False,
-            log_changes=True
+            log_changes=False,
+            **scan_kwargs
         )
 
         # get results
@@ -105,13 +110,15 @@ class ScanExecutor:
         top_results = top_results.replace(np.nan, "N/A", regex=True)
         df_top = top_results.sort_values('prob_itm (%)', ascending=True)
 
+        # output results
+        if print_results:
+            formatted_df_top = tabulate(df_top, headers='keys', tablefmt='psql')
+            if refresh_results: os.system('clear')
+            print(formatted_df_top, flush=True)
+
         # return results
         if return_results:
             return df_top
-
-        # output results
-        formatted_df_top = tabulate(df_top, headers='keys', tablefmt='psql')
-        print(formatted_df_top)
 
     def run_focus_put_scanner(self, symbol):
 

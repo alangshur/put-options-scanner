@@ -36,7 +36,8 @@ class WheelPutScanner(ScannerBase):
         save_scan=True,
         log_changes=True,
         manual_greeks=False,
-        scan_name=None
+        scan_name=None,
+        prog_bar=True
     ):
 
         self.uni_list = uni_list
@@ -47,6 +48,7 @@ class WheelPutScanner(ScannerBase):
         self.log_changes = log_changes
         self.manual_greeks = manual_greeks
         self.scan_name = scan_name
+        self.prog_bar = prog_bar
 
         # fetch universe
         if self.uni_file is not None:
@@ -143,7 +145,7 @@ class WheelPutScanner(ScannerBase):
         d_thread, director_exit_flag):
 
         size = symbol_queue.qsize()
-        pbar = tqdm(total=size)
+        if self.prog_bar: pbar = tqdm(total=size)
 
         # build log file
         if self.log_changes:
@@ -154,15 +156,15 @@ class WheelPutScanner(ScannerBase):
         while not symbol_queue.empty():
             if self.log_changes: self.__flush_logs(f, log_queue)
             new_size = symbol_queue.qsize()
-            pbar.update(size - new_size)
+            if self.prog_bar: pbar.update(size - new_size)
             size = new_size
             time.sleep(0.1)
         new_size = symbol_queue.qsize()
-        pbar.update(size - new_size)
+        if self.prog_bar: pbar.update(size - new_size)
 
         # wait for queue
         symbol_queue.join()
-        pbar.close()
+        if self.prog_bar: pbar.close()
 
         # wait for threads
         for p in s_processes: p.join()
