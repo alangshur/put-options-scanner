@@ -7,12 +7,18 @@ import os
 
 class LoopScanExecutor:
 
-    def __init__(self, delay_secs=300, score_threshold=30):
+    def __init__(self, 
+                 delay_secs=900, 
+                 repeat_window=3600, 
+                 score_threshold=50):
 
         self.delay_secs = delay_secs
+        self.repeat_window = repeat_window
         self.score_threshold = score_threshold
+
         self.scan_executor = ScanExecutor()
         self.text_sender = MailTextSender()
+        self.lifetime_notifications = {}
 
     def run_scan_loop(self, verbose=True):
         scan_num = 0 
@@ -29,17 +35,26 @@ class LoopScanExecutor:
                     return_results=True,
                     prog_bar=False
                 )
+
                 scan_results = scan_results.sort_values('score (%)', ascending=False)
                 scan_results = scan_results[scan_results['score (%)'] >= self.score_threshold]
-                
-                # draft alert messages
                 cur_time = dt.datetime.now().strftime("%I:%M %p")
                 for contract in scan_results.index:
+
+                    # verify repeated alert
+                    if contract in self.lifetime_notifications:
+                        last_update = self.lifetime_notifications[contract]
+                        if now - last_update > self.repeat_window: continue
+
+                    # draft alert messages
                     score = scan_results.loc[contract, 'score (%)']
                     ticker = str(contract).split(' ')[0]
                     subject = 'ALERT: {} High Score'.format(ticker)
                     text = 'Put scan at {} revealed a score of {}% for the contract {}.'.format(cur_time, round(score, 2), contract)
+                    
+                    # send alert
                     self.text_sender.send_message(subject, text)
+                    self.lifetime_notifications[contract] = now
 
                 # sleep until next scan
                 scan_num += 1
