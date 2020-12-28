@@ -17,7 +17,7 @@ class LoopScanExecutor:
         self.score_threshold = score_threshold
 
         self.scan_executor = ScanExecutor()
-        self.text_sender = MailTextSender()
+        self.text_sender = MailTextSender(server_cold_start=True)
         self.lifetime_notifications = {}
 
     def run_scan_loop(self, verbose=True):
@@ -36,6 +36,9 @@ class LoopScanExecutor:
                     prog_bar=False
                 )
 
+                if scan_results is None:
+                    print('No matching puts.')
+                    continue
                 scan_results = scan_results.sort_values('score (%)', ascending=False)
                 scan_results = scan_results[scan_results['score (%)'] >= self.score_threshold]
                 cur_time = dt.datetime.now().strftime("%I:%M %p")
@@ -57,12 +60,13 @@ class LoopScanExecutor:
                     self.lifetime_notifications[contract] = now
 
                 # sleep until next scan
+                print()
                 scan_num += 1
                 then = time.time()
                 diff = int(then - now)
                 sleep_secs = self.delay_secs - diff
                 while sleep_secs > 0:
-                    print('\n\nScan {} in {} seconds...\t'.format(scan_num, sleep_secs), end='')
+                    print('\rScan {} in {} seconds...\t'.format(scan_num, sleep_secs), end='')
                     time.sleep(1)
                     sleep_secs -= 1
 
