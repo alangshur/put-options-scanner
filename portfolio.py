@@ -5,4 +5,4 @@ if __name__ == '__main__':
     
     # execute portfolio read
     executor = PortfolioExecutor()
-    executor.run_portfolio_read()s
+    executor.run_portfolio_read()

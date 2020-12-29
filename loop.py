@@ -1,8 +1,12 @@
-from src.executor.loop import LoopScanExecutor
+from src.executor.loop import LoopMonitorExecutor
 
 
 if __name__ == '__main__':
 
     # execute loop scan
-    executor = LoopScanExecutor()
-    executor.run_scan_loop()
+    executor = LoopMonitorExecutor(
+        delay_secs=300, 
+        repeat_window=3600, 
+        score_threshold=40
+    )
+    executor.run()

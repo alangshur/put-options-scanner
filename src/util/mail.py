@@ -30,10 +30,12 @@ class MailTextSender:
     def __del__(self):
 
         # close server connection
-        self.server.close()
+        if not self.server_cold_start: 
+            self.server.close()
         
     def send_message(self, subject, text):
 
+        # build cold start server
         if self.server_cold_start:
             context = ssl.create_default_context()
             server = smtplib.SMTP_SSL(self.smtp_server, self.port, context=context)
@@ -57,3 +59,7 @@ class MailTextSender:
             self.receiver_email, 
             message.as_string()
         )
+
+        # close cold start server
+        if self.server_cold_start:
+            server.close() 

@@ -114,6 +114,8 @@ class ScanExecutor:
         if print_results:
             formatted_df_top = tabulate(df_top, headers='keys', tablefmt='psql')
             if refresh_results: os.system('clear')
+            print()
+            print('Contract Scan')
             print(formatted_df_top, flush=True)
 
         # return results

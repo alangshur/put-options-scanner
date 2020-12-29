@@ -15,9 +15,12 @@ class PortfolioExecutor:
         num = float(num)
         return num
 
-    def run_portfolio_read(self):
+    def run_portfolio_read(self, 
+                           print_general_stats=True,
+                           return_results=False,
+                           min_close_days=3):
 
-        contract_data = [[], [], [], [], [], [], [], [], []] 
+        contract_data = [[], [], [], [], [], [], [], [], [], [], []] 
         api = TradierAPI()
         portfolio_pl = 0
         max_portfolio_pl = 0
@@ -58,15 +61,28 @@ class PortfolioExecutor:
             contract_data[5].append(moneyness_status)
 
             # get return and p/l
-            ret = round((contract_query['ask'] - sell_price) / sell_price * -100, 2)
+            ret = (sell_price - contract_query['ask']) / sell_price
             pl = (sell_price - contract_query['ask']) * 100 * qty
-            contract_data[6].append(ret)
+            contract_data[6].append(round(ret * 100, 2))
             contract_data[7].append(pl)
             contract_data[8].append(contract_query['ask'])
 
             # get tied-up capital
             tuc = self.num_to_float(contract['Tied-Up Capital (F)'])
 
+            # calculate annualized ROCs
+            a_roc = float(contract['Annualized ROC'][:-1]) / 100
+            contract_data[9].append(round(a_roc * 100, 2))
+            close_ret = ((sell_price - contract_query['ask']) * qty * 100) / tuc
+            dt = datetime.strptime(contract['Date Opened (F)'], '%m/%d/%Y').date()
+            dse = (date.today() - dt).days
+            if dse < min_close_days or contract_comps[5] == 'Call': 
+                cur_a_roc = 0
+            else:
+                try: cur_a_roc = (1 + close_ret) ** (365.2425 / dse) - 1
+                except: cur_a_roc = float('inf')
+            contract_data[10].append(round(cur_a_roc * 100, 2))
+ 
             # update general stats
             if contract_comps[5] == 'Put': portfolio_pl += pl
             max_portfolio_pl += sell_price * 100 * qty
@@ -76,20 +92,25 @@ class PortfolioExecutor:
         df = pd.DataFrame(np.transpose(contract_data))
         df.index = portfolio_df['Contract (F)'].values
         df.columns = [
-            'underlying_price ($)', 'contract_price ($)', 
-            'dte', 'be ($)', 'moneyness (%)', 'status', 
-            'return (%)', 'p/l ($)', 'target_ask ($)'
+            'und_price ($)', 'cont_price ($)', 'dte', 
+            'be ($)', 'mnyness (%)', 'status', 'return (%)', 
+            'p/l ($)', 'tgt_ask ($)', 'a_roc (%)', 
+            'cur_a_roc (%)'
         ]
 
         # print general stats
         print()
-        print('Portfolio size: {}'.format(portfolio_df.shape[0]))
-        print('Realized portfolio p/l: {} USD'.format(round(portfolio_pl, 2)))
-        print('Max portfolio p/l: {} USD'.format(round(max_portfolio_pl, 2)))
-        print('Cash utilization: {} USD'.format(round(cash_util, 2)))
-        print()
+        print('Portfolio Scan')
+        if print_general_stats:
+            print()
+            print('Portfolio size: {}'.format(portfolio_df.shape[0]))
+            print('Realized portfolio p/l: {} USD'.format(round(portfolio_pl, 2)))
+            print('Max portfolio p/l: {} USD'.format(round(max_portfolio_pl, 2)))
+            print('Cash utilization: {} USD'.format(round(cash_util, 2)))
+            print()
 
         # print dataframe
         formatted_df = tabulate(df, headers='keys', tablefmt='psql')
         print(formatted_df)
-        print()
+
+        return df
