@@ -52,8 +52,8 @@ class LoopMonitorExecutor:
                 )
 
                 # execute scans
-                self.notify_contract_scan(put_scan, now)
-                self.notify_portfolio_scan(put_scan, portfolio_scan, now)
+                self.notify_contract_scan(put_scan)
+                self.notify_portfolio_scan(put_scan, portfolio_scan)
                 
                 # sleep until next scan
                 print()
@@ -70,7 +70,7 @@ class LoopMonitorExecutor:
         except KeyboardInterrupt:
             print('\nTerminating...')
 
-    def notify_contract_scan(self, put_scan, now):
+    def notify_contract_scan(self, put_scan):
 
         # filter scan results
         if put_scan is None: return
@@ -82,7 +82,7 @@ class LoopMonitorExecutor:
             # verify repeated alert
             if contract in self.lifetime_notifications:
                 last_update = self.lifetime_notifications[contract]
-                if now - last_update > self.repeat_window: continue
+                if time.time() - last_update < self.repeat_window: continue
 
             # draft alert messages
             score = put_scan.loc[contract, 'score (%)']
@@ -96,23 +96,24 @@ class LoopMonitorExecutor:
 
             # send alert
             self.text_sender.send_message(subject, text)
-            self.lifetime_notifications[contract] = now
+            self.lifetime_notifications[contract] = time.time()
 
-    def notify_portfolio_scan(self, put_scan, portfolio_scan, now):
-
-        # get puts to close
-        closeable_puts = portfolio_scan[
-            portfolio_scan['cur_a_roc (%)'] >= portfolio_scan['a_roc (%)']
-        ].index
+    def notify_portfolio_scan(self, put_scan, portfolio_scan):
 
         # iterate over closeable puts
         cur_time = dt.datetime.now().strftime("%I:%M %p")
-        for contract in closeable_puts:
+        for contract in portfolio_scan.index:
 
+            # ignore puts with immature a_roc
+            cur_a_roc = float(portfolio_scan.loc[contract, 'cur_a_roc (%)'])
+            a_roc = float(portfolio_scan.loc[contract, 'a_roc (%)'])
+            if cur_a_roc < a_roc:
+                continue
+                        
             # verify repeated alert
             if contract in self.lifetime_notifications:
                 last_update = self.lifetime_notifications[contract]
-                if now - last_update > self.repeat_window: continue
+                if time.time() - last_update < self.repeat_window: continue
         
             # draft alert messages
             ticker = str(contract).split(' ')[0]
@@ -126,4 +127,4 @@ class LoopMonitorExecutor:
 
             # send alert
             self.text_sender.send_message(subject, text)
-            self.lifetime_notifications[contract] = now
+            self.lifetime_notifications[contract] = time.time()
