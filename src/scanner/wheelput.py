@@ -17,6 +17,7 @@ from numpy import warnings
 from pathlib import Path
 import multiprocessing
 from tqdm import tqdm
+import pandas as pd
 import numpy as np
 import threading
 import math
@@ -308,7 +309,6 @@ class WheelScannerWorkerProcess(multiprocessing.Process):
                     dividend=dividend, 
                     expiration=expiration, 
                     chain=chain, 
-                    quotes=quotes,
                     risk_free_rate=self.risk_free_rate
                 )
 
@@ -317,6 +317,7 @@ class WheelScannerWorkerProcess(multiprocessing.Process):
                 quotes_data = self.__analyze_quotes(
                     symbol=symbol,
                     quotes=quotes,
+                    expiration=expiration,
                     atm_iv=atm_iv,
                     be=be
                 )
@@ -464,7 +465,6 @@ class WheelScannerWorkerProcess(multiprocessing.Process):
         dividend,
         expiration, 
         chain,
-        quotes,
         risk_free_rate
     ):
 
@@ -487,9 +487,6 @@ class WheelScannerWorkerProcess(multiprocessing.Process):
         # build deta curve
         coefs = self.__build_delta_curve(filt_chain, greeks_lookup)
         if coefs is None: return [], None, None
-
-        # memoize quote stats
-        # contract_age = 
 
         # iterate over levels
         contract_collection = []
@@ -532,6 +529,7 @@ class WheelScannerWorkerProcess(multiprocessing.Process):
     def __analyze_quotes(self,
         symbol,
         quotes,
+        expiration,
         atm_iv,
         be
     ):
@@ -552,6 +550,17 @@ class WheelScannerWorkerProcess(multiprocessing.Process):
         iv_percentile = (vols < atm_iv).sum() / vols.shape[0]
         above_be_percentile = (quotes >= be).sum() / quotes.shape[0]
 
+        # get 95% confidence move before dte
+        exp_date = datetime.strptime(expiration, "%Y-%m-%d").date()
+        cur_date = date.today()
+        bus_dte = np.busday_count(cur_date, exp_date)
+        quotes_arr = pd.DataFrame(np.array(quotes))
+        quotes_move = quotes_arr.pct_change(periods=bus_dte).dropna()
+        quotes_abs_move = np.abs(quotes_move.to_numpy())
+        exp_move_mean = quotes_abs_move.mean() 
+        exp_move_std = quotes_abs_move.std(ddof=1)
+        exp_move_conf = exp_move_mean + 1.2815 * exp_move_std
+
         return [
             round(ret, 5), # period return over regression range
             round(score, 5), # regression score over regression range
@@ -559,7 +568,8 @@ class WheelScannerWorkerProcess(multiprocessing.Process):
             round(curr_vol, 5), # current historical volatility
             round(hv_percentile, 5), # current implied volatility percentile
             round(iv_percentile, 5), # current historical volatility percentile
-            round(above_be_percentile, 5) # annual closes above be percentile
+            round(above_be_percentile, 5), # annual closes above be percentile,
+            round(exp_move_conf, 5) # 95% confidence perc move before expiration
         ]
 
     def __regress_range(self, quotes, end_range, max_ret=1.0):

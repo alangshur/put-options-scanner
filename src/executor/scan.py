@@ -61,7 +61,7 @@ class ScanExecutor:
             'underlying', 'premium', 'dte', 'roc', 'be', 'moneyness',
             'prob_itm_delta', 'prob_be_delta', 'prob_be_iv', 'iv', 'iv_skew',
             'udl_year_ret', 'udl_year_ret_r2', 'udl_year_market_corr', 'udl_hist_vol', 
-            'udl_iv_percentile', 'udl_hv_percentile', 'above_be_percentile'
+            'udl_iv_percentile', 'udl_hv_percentile', 'above_be_percentile', 'exp_move_conf'
         ]
 
         # filter all contracts
@@ -84,6 +84,12 @@ class ScanExecutor:
         df_filt['a_roc (%)'] = round(df['a_roc'], 3)
         df_filt['prob_itm (%)'] = round(df['prob_itm_delta'] * 100, 3)
         df_filt.index = df.index
+
+        # get expected relative move
+        contract_tgt = df['moneyness'] * df['underlying']
+        exp_move_tgt = df['underlying'] - df['exp_move_conf'] * df['underlying']
+        exp_rel_move = (exp_move_tgt - contract_tgt) / contract_tgt
+        df_filt['exp_rel_move (%)'] = round(exp_rel_move * 100, 3)
 
         # filter top contracts
         top_indices, top_results = [], []
