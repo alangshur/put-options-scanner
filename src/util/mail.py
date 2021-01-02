@@ -50,7 +50,7 @@ class MailTextSender:
         message['To'] = self.receiver_email
 
         # compile text
-        text_plain = MIMEText('\n\n' + text + '  ', 'plain')
+        text_plain = MIMEText(text + '  ', 'plain')
         message.attach(text_plain)
 
         # send message

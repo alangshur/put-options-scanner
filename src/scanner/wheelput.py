@@ -308,6 +308,7 @@ class WheelScannerWorkerProcess(multiprocessing.Process):
                     dividend=dividend, 
                     expiration=expiration, 
                     chain=chain, 
+                    quotes=quotes,
                     risk_free_rate=self.risk_free_rate
                 )
 
@@ -463,6 +464,7 @@ class WheelScannerWorkerProcess(multiprocessing.Process):
         dividend,
         expiration, 
         chain,
+        quotes,
         risk_free_rate
     ):
 
@@ -485,7 +487,10 @@ class WheelScannerWorkerProcess(multiprocessing.Process):
         # build deta curve
         coefs = self.__build_delta_curve(filt_chain, greeks_lookup)
         if coefs is None: return [], None, None
- 
+
+        # memoize quote stats
+        # contract_age = 
+
         # iterate over levels
         contract_collection = []
         for level in filt_chain:

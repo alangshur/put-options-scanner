@@ -12,7 +12,7 @@ class ScanExecutor:
     def run_put_scanner(self,
                     ignore_active_tickers=False, 
                     aroc_limit=0.3,
-                    prob_itm_limit=0.3,
+                    prob_itm_limit=0.25,
                     print_results=True,
                     refresh_results=False,
                     return_results=False,
@@ -44,7 +44,7 @@ class ScanExecutor:
         scanner = WheelPutScanner(
             uni_list=target_equities,
             num_processes=6,
-            price_cap=300.0,
+            price_cap=1000.0,
             save_scan=False,
             log_changes=False,
             **scan_kwargs
@@ -70,18 +70,18 @@ class ScanExecutor:
         df = df[df['a_roc'] >= aroc_limit]
         df = df[df['prob_itm_delta'] < prob_itm_limit]
 
-        min_score = aroc_limit * (1 - prob_itm_limit)
-        max_score = 0.5 * (1 - 0.1)
+        thresh = prob_itm_limit + aroc_limit
+        min_score = aroc_limit * (thresh - prob_itm_limit)
+        max_score = 0.5 * (thresh - 0.1)
         norm = lambda x: (x - x.min()) / (x.max() - x.min())
 
         # refine columns
         df_filt = pd.DataFrame().astype(np.float64)
+        df_filt['score (%)'] = round(100 * (df['a_roc'] * (thresh - df['prob_itm_delta']) - min_score) / (max_score - min_score), 3)
         df_filt['target_ask ($)'] = round(df['premium'] / 100.0, 2)
-        df_filt['underlying ($)'] = round(df['underlying'], 3)
         df_filt['dte (D)'] = df['dte']
-        df_filt['score (%)'] = round(100 * (df['a_roc'] * (1 - df['prob_itm_delta']) - min_score) / (max_score - min_score), 3)
-        df_filt['a_roc (%)'] = round(df['a_roc'], 3)
         df_filt['moneyness (%)'] = round(df['moneyness'], 3)
+        df_filt['a_roc (%)'] = round(df['a_roc'], 3)
         df_filt['prob_itm (%)'] = round(df['prob_itm_delta'] * 100, 3)
         df_filt.index = df.index
 
@@ -106,9 +106,9 @@ class ScanExecutor:
         forecast_df /= np.broadcast_to(strikes, (strikes.shape[0], 3))
         top_results['rel_hi_fc (%)'] = np.round(100 * forecast_df.iloc[:, 0].values, 3)
         top_results['rel_mdn_fc (%)'] = np.round(100 * forecast_df.iloc[:, 1].values, 3)
-        top_results['rel_lo_fc (%)'] = np.round(forecast_df.iloc[:, 2].values, 3)
+        top_results['rel_lo_fc (%)'] = np.round(100 * forecast_df.iloc[:, 2].values, 3)
         top_results = top_results.replace(np.nan, "N/A", regex=True)
-        df_top = top_results.sort_values('prob_itm (%)', ascending=True)
+        df_top = top_results.sort_values('score (%)', ascending=False)
 
         # output results
         if print_results:
@@ -128,7 +128,7 @@ class ScanExecutor:
         scanner = WheelPutScanner(
             uni_list=[symbol],
             num_processes=6,
-            price_cap=250.0,
+            price_cap=1000.0,
             save_scan=False,
             log_changes=True
         )

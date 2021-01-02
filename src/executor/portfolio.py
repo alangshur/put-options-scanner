@@ -92,12 +92,19 @@ class PortfolioExecutor:
         df = pd.DataFrame(np.transpose(contract_data))
         df.index = portfolio_df['Contract (F)'].values
         df.columns = [
-            'und_price ($)', 'cont_price ($)', 'dte', 
-            'be ($)', 'mnyness (%)', 'status', 'return (%)', 
-            'p/l ($)', 'tgt_ask ($)', 'a_roc (%)', 
+            'und_price ($)', 'cont_price ($)', 'dte (D)', 
+            'be ($)', 'moneyness (%)', 'status', 'return (%)', 
+            'p/l ($)', 'target_ask ($)', 'a_roc (%)', 
             'cur_a_roc (%)'
         ]
 
+        # rearrange columns
+        df = df[[
+            'target_ask ($)', 'dte (D)', 'status', 
+            'moneyness (%)', 'return (%)',
+            'a_roc (%)', 'cur_a_roc (%)'
+        ]].sort_values(['cur_a_roc (%)'], ascending=False)
+        
         # print general stats
         print()
         print('Portfolio Scan')

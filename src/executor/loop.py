@@ -1,6 +1,6 @@
 from src.executor.scan import ScanExecutor
 from src.executor.portfolio import PortfolioExecutor
-from src.util.mail import MailTextSender
+from src.util.slack import SlackTextSender
 import datetime as dt
 import time
 import os
@@ -19,7 +19,7 @@ class LoopMonitorExecutor:
 
         self.scan_executor = ScanExecutor()
         self.portfolio_executor = PortfolioExecutor()
-        self.text_sender = MailTextSender(server_cold_start=True)
+        self.text_sender = SlackTextSender()
         self.lifetime_notifications = {}
 
     def num_to_float(self, num):
