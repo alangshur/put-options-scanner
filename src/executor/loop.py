@@ -11,11 +11,13 @@ class LoopMonitorExecutor:
     def __init__(self, 
                  delay_secs=900, 
                  repeat_window=3600, 
-                 score_threshold=50):
+                 score_threshold=50,
+                 notify_activity=True):
 
         self.delay_secs = delay_secs
         self.repeat_window = repeat_window
         self.score_threshold = score_threshold
+        self.notify_activity = notify_activity
 
         self.scan_executor = ScanExecutor()
         self.portfolio_executor = PortfolioExecutor()
@@ -95,7 +97,7 @@ class LoopMonitorExecutor:
             )
 
             # send alert
-            self.text_sender.send_message(subject, text)
+            if self.notify_activity: self.text_sender.send_message(subject, text)
             self.lifetime_notifications[contract] = time.time()
 
     def notify_portfolio_scan(self, put_scan, portfolio_scan):
@@ -125,6 +127,6 @@ class LoopMonitorExecutor:
                 str(portfolio_scan.loc[contract, 'cur_a_roc (%)']) + '%'
             )
 
-            # send alert
-            self.text_sender.send_message(subject, text)
+            # send alerts
+            if self.notify_activity: self.text_sender.send_message(subject, text)
             self.lifetime_notifications[contract] = time.time()

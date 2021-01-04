@@ -7,6 +7,7 @@ if __name__ == '__main__':
     executor = LoopMonitorExecutor(
         delay_secs=900, 
         repeat_window=3600, 
-        score_threshold=40
+        score_threshold=40,
+        notify_activity=False
     )
     executor.run()

@@ -14,6 +14,7 @@ class SlackTextSender:
         self.client = WebClient(token=os.environ['SLACK_BOT_TOKEN'])
         
     def send_message(self, subject, text):
+        print('sending!')
 
         # submit slack message
         try:
@@ -23,8 +24,9 @@ class SlackTextSender:
                 text=message
             )
             assert response['message']['text'] == message
-            time.sleep(1)
             
         except SlackApiError as e:
             assert e.response['ok'] is False
             assert e.response['error']
+
+        print('done')
