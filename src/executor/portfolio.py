@@ -10,7 +10,6 @@ class PortfolioExecutor:
 
     def num_to_float(self, num):
         if '$' in num: num = num[1:]
-        if '.' in num: num = num[:-3]
         num = num.replace(',', '')
         num = float(num)
         return num
