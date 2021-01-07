@@ -8,6 +8,6 @@ if __name__ == '__main__':
         delay_secs=900, 
         repeat_window=3600, 
         score_threshold=40,
-        notify_activity=False
+        notify_activity=True
     )
     executor.run()

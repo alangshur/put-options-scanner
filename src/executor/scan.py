@@ -35,7 +35,7 @@ class ScanExecutor:
 
         # update target equities
         if ignore_active_tickers:
-            portfolio_df = sheets_extractor.fetch('\'Active Positions\'!B5:Q1000')
+            portfolio_df = sheets_extractor.fetch('\'Active Positions\'!B5:R1000')
             portfolio_df = portfolio_df[portfolio_df['Stage (F)'] != 'Done']
             portfolio_contracts = portfolio_df['Ticker'].values
             target_equities = list(set(target_equities) - set(portfolio_contracts))
@@ -77,8 +77,9 @@ class ScanExecutor:
 
         # refine columns
         df_filt = pd.DataFrame().astype(np.float64)
-        df_filt['score (%)'] = round(100 * (df['a_roc'] * (thresh - df['prob_itm_delta']) - min_score) / (max_score - min_score), 3)
+        df_filt['underlying ($)'] = round(df['underlying'], 2)
         df_filt['target_ask ($)'] = round(df['premium'] / 100.0, 2)
+        df_filt['score (%)'] = round(100 * (df['a_roc'] * (thresh - df['prob_itm_delta']) - min_score) / (max_score - min_score), 3)
         df_filt['dte (D)'] = df['dte']
         df_filt['moneyness (%)'] = round(df['moneyness'], 3)
         df_filt['a_roc (%)'] = round(df['a_roc'], 3)
@@ -89,7 +90,7 @@ class ScanExecutor:
         contract_tgt = df['moneyness'] * df['underlying']
         exp_move_tgt = df['underlying'] - df['exp_move_conf'] * df['underlying']
         exp_rel_move = (exp_move_tgt - contract_tgt) / contract_tgt
-        df_filt['exp_rel_move (%)'] = round(exp_rel_move * 100, 3)
+        df_filt['exp_move (%)'] = round(exp_rel_move * 100, 3)
 
         # filter top contracts
         top_indices, top_results = [], []
@@ -110,9 +111,9 @@ class ScanExecutor:
         forecast_df = forecast_df.loc[tickers]
         forecast_df -= np.broadcast_to(strikes, (strikes.shape[0], 3))
         forecast_df /= np.broadcast_to(strikes, (strikes.shape[0], 3))
-        top_results['rel_hi_fc (%)'] = np.round(100 * forecast_df.iloc[:, 0].values, 3)
-        top_results['rel_mdn_fc (%)'] = np.round(100 * forecast_df.iloc[:, 1].values, 3)
-        top_results['rel_lo_fc (%)'] = np.round(100 * forecast_df.iloc[:, 2].values, 3)
+        top_results['hi_fc (%)'] = np.round(100 * forecast_df.iloc[:, 0].values, 3)
+        top_results['mdn_fc (%)'] = np.round(100 * forecast_df.iloc[:, 1].values, 3)
+        top_results['lo_fc (%)'] = np.round(100 * forecast_df.iloc[:, 2].values, 3)
         top_results = top_results.replace(np.nan, "N/A", regex=True)
         df_top = top_results.sort_values('score (%)', ascending=False)
 
@@ -184,11 +185,12 @@ class ScanExecutor:
 
         # fetch contract stats
         sheets_extractor = SheetsPortfolioExtractor()
-        portfolio_df = sheets_extractor.fetch('\'Active Positions\'!B5:Q1000')
+        portfolio_df = sheets_extractor.fetch('\'Active Positions\'!B5:R1000')
         contract = portfolio_df[portfolio_df['Contract (F)'] == put_contract]
         put_ticker = put_contract.split(' ')[0]
         put_strike = float(put_contract.split(' ')[4][1:])
-        cost_basis = float(contract.iloc[0]['Cost Basis (F)'][1:])
+        if contract.shape[0] > 0: cost_basis = float(contract.iloc[0]['Cost Basis (F)'][1:])
+        else: cost_basis = put_strike
 
         # load scanner
         scanner = WheelCallScanner(
@@ -212,6 +214,7 @@ class ScanExecutor:
         # filter results
         df['adj_payout'] = df['premium'] + df['underlying_gain'] * df['prob_itm_delta']
         df = df[df['adj_payout'] > 0.0]
+        df = df[(df['premium'] + df['underlying_gain']) > 0]
 
         # refine columns
         df_filt = pd.DataFrame().astype(np.float64)

@@ -17,7 +17,7 @@ class PortfolioExecutor:
     def run_portfolio_read(self, 
                            print_general_stats=True,
                            return_results=False,
-                           min_close_days=3):
+                           min_close_days=2):
 
         contract_data = [[], [], [], [], [], [], [], [], [], [], []] 
         api = TradierAPI()
@@ -27,7 +27,7 @@ class PortfolioExecutor:
 
         # load portfolio
         sheets_extractor = SheetsPortfolioExtractor()
-        portfolio_df = sheets_extractor.fetch('\'Active Positions\'!B5:Q1000')
+        portfolio_df = sheets_extractor.fetch('\'Active Positions\'!B5:R1000')
         portfolio_df = portfolio_df[portfolio_df['Stage (F)'] != 'Done']
 
         # analyze contract data
