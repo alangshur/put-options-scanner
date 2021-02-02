@@ -352,7 +352,7 @@ class WheelScannerWorkerProcess(multiprocessing.Process):
         dte = (exp_dt - now_dt).days
 
         # target dte range
-        if dte < 3 or dte > 42: return False
+        if dte < 6 or dte > 42: return False
         else: return True
 
     def __validate_quotes(self, quotes):

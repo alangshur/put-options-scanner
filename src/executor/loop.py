@@ -1,7 +1,10 @@
-from src.executor.scan import ScanExecutor
 from src.executor.portfolio import PortfolioExecutor
+from src.executor.scan import ScanExecutor
 from src.util.slack import SlackTextSender
+from tabulate import tabulate
+from functools import reduce
 import datetime as dt
+import numpy as np
 import time
 import os
 
@@ -38,39 +41,70 @@ class LoopMonitorExecutor:
             while True:
 
                 # scan targets contracts
+                os.system('clear')
+                print('Running put scan... ', end='', flush=True)
                 now = time.time()
                 put_scan = self.scan_executor.run_put_scanner(
                     ignore_active_tickers=False,
-                    print_results=True,
-                    refresh_results=True,
+                    print_results=False,
+                    refresh_results=False,
                     return_results=True,
                     prog_bar=False
                 )
 
                 # scan portfolio
+                print('Done', flush=True)
                 portfolio_scan = self.portfolio_executor.run_portfolio_read(
+                    print_results=False,
                     print_general_stats=False,
                     return_results=True
                 )
 
                 # execute scans
+                print('Running portfolio scan... ', end='', flush=True)
+                put_scan = self.filter_put_scan(put_scan, portfolio_scan)
                 self.notify_contract_scan(put_scan)
                 self.notify_portfolio_scan(put_scan, portfolio_scan)
+
+                # print results
+                print('Done', flush=True)
+                self.print_results(put_scan, portfolio_scan)
                 
                 # sleep until next scan
-                print()
+                print(flush=True)
                 scan_num += 1
                 then = time.time()
                 diff = int(then - now)
                 sleep_secs = self.delay_secs - diff
                 while sleep_secs > 0:
-                    print('\rNext scan in {} seconds...\t'.format(sleep_secs), end='')
+                    print('\rNext scan in {} seconds...\t'.format(sleep_secs), end='', flush=True)
                     time.sleep(1)
                     sleep_secs -= 1
-                print('\rLoading scan {}...\t\t'.format(scan_num), end='')
+                print('\rLoading scan {}...\t\t'.format(scan_num), end='', flush=True)
 
         except KeyboardInterrupt:
             print('\nTerminating...')
+
+    def filter_put_scan(self, put_scan, portfolio_scan):
+        updated_put_scan = put_scan.copy()
+
+        # get puts to avoid
+        cur_a_roc = portfolio_scan.loc[:, 'cur_a_roc (%)'].astype(np.float32)
+        a_roc = portfolio_scan.loc[:, 'a_roc (%)'].astype(np.float32)
+        dte = portfolio_scan.loc[:, 'dte (D)'].astype(np.float32)
+        mask = (cur_a_roc < a_roc) & (dte > 1)
+
+        # strip ticker names
+        contracts = portfolio_scan[mask].index.values.tolist()
+        tickers = [c.split(' ')[0] for c in contracts]
+
+        # filter put scan tickers
+        if len(tickers) == 0: return put_scan
+        masks = [put_scan.index.str.startswith(t) for t in tickers]
+        mask = reduce(lambda x, y: x | y, masks)
+        updated_put_scan = put_scan[~mask]
+        
+        return updated_put_scan 
 
     def notify_contract_scan(self, put_scan):
 
@@ -130,3 +164,16 @@ class LoopMonitorExecutor:
             # send alerts
             if self.notify_activity: self.text_sender.send_message(subject, text)
             self.lifetime_notifications[contract] = time.time()
+
+    def print_results(self, put_scan, portfolio_scan):
+        formatted_put_scan = tabulate(put_scan, headers='keys', tablefmt='psql')
+        formatted_portfolio_scan = tabulate(portfolio_scan, headers='keys', tablefmt='psql')
+
+        print(flush=True)
+        print('Contract Scan', flush=True)
+        print(formatted_put_scan, flush=True)
+
+        print(flush=True)
+        print('Portfolio Scan', flush=True)
+        print(formatted_portfolio_scan, flush=True)
+

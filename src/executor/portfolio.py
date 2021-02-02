@@ -15,9 +15,10 @@ class PortfolioExecutor:
         return num
 
     def run_portfolio_read(self, 
+                           print_results=True,
                            print_general_stats=True,
                            return_results=False,
-                           min_close_days=2):
+                           min_close_days=3):
 
         contract_data = [[], [], [], [], [], [], [], [], [], [], []] 
         api = TradierAPI()
@@ -105,18 +106,20 @@ class PortfolioExecutor:
         ]].sort_values(['cur_a_roc (%)'], ascending=False)
         
         # print general stats
-        print()
-        print('Portfolio Scan')
-        if print_general_stats:
+        if print_results:
             print()
-            print('Portfolio size: {}'.format(portfolio_df.shape[0]))
-            print('Realized portfolio p/l: {} USD'.format(round(portfolio_pl, 2)))
-            print('Max portfolio p/l: {} USD'.format(round(max_portfolio_pl, 2)))
-            print('Cash utilization: {} USD'.format(round(cash_util, 2)))
-            print()
+            print('Portfolio Scan')
 
-        # print dataframe
-        formatted_df = tabulate(df, headers='keys', tablefmt='psql')
-        print(formatted_df)
+            if print_general_stats:
+                print()
+                print('Portfolio size: {}'.format(portfolio_df.shape[0]))
+                print('Realized portfolio p/l: {} USD'.format(round(portfolio_pl, 2)))
+                print('Max portfolio p/l: {} USD'.format(round(max_portfolio_pl, 2)))
+                print('Cash utilization: {} USD'.format(round(cash_util, 2)))
+                print()
 
-        return df
+            formatted_df = tabulate(df, headers='keys', tablefmt='psql')
+            print(formatted_df)
+
+        if return_results:
+            return df

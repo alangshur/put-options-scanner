@@ -115,7 +115,7 @@ class ScanExecutor:
         top_results['mdn_fc (%)'] = np.round(100 * forecast_df.iloc[:, 1].values, 3)
         top_results['lo_fc (%)'] = np.round(100 * forecast_df.iloc[:, 2].values, 3)
         top_results = top_results.replace(np.nan, "N/A", regex=True)
-        df_top = top_results.sort_values('score (%)', ascending=False)
+        df_top = top_results.sort_values('prob_itm (%)', ascending=True)
 
         # output results
         if print_results:
