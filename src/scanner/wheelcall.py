@@ -1,6 +1,6 @@
 from src.scanner.base import ScannerBase
 from src.api.tradier import TradierAPI
-from src.api.polygon import PolygonAPI
+from src.api.yfinance import YFinanceAPI
 from datetime import datetime, date
 from scipy.stats import norm
 import numpy as np
@@ -43,7 +43,7 @@ class WheelCallScanner(ScannerBase):
 
         # build resources
         self.option_api = TradierAPI()
-        self.stock_api = PolygonAPI()
+        self.stock_api = YFinanceAPI()
         results = []
 
         # pull underyling and option expirations

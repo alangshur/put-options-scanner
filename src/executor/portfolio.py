@@ -40,9 +40,11 @@ class PortfolioExecutor:
 
             # get quotes
             underlying_quote = api.fetch_underlying(contract_comps[0])[0]['last']
-            contract_query = api.fetch_contract(contract_string)[0]
+            contract_query = api.fetch_contract(contract_string)
+            contract_last = np.nan if contract_query is None else contract_query[0]['last']
+            contract_ask = np.nan if contract_query is None else contract_query[0]['ask']
             contract_data[0].append(round(underlying_quote, 2))
-            contract_data[1].append(round(contract_query['last'], 2))
+            contract_data[1].append(round(contract_last, 2))
 
             # get dte
             dt = datetime.strptime(' '.join(contract_comps[1:4]), '%B %d %Y').date()
@@ -61,11 +63,11 @@ class PortfolioExecutor:
             contract_data[5].append(moneyness_status)
 
             # get return and p/l
-            ret = (sell_price - contract_query['ask']) / sell_price
-            pl = (sell_price - contract_query['ask']) * 100 * qty
+            ret = (sell_price - contract_ask) / sell_price
+            pl = (sell_price - contract_ask) * 100 * qty
             contract_data[6].append(round(ret * 100, 2))
             contract_data[7].append(pl)
-            contract_data[8].append(contract_query['ask'])
+            contract_data[8].append(contract_ask)
 
             # get tied-up capital
             tuc = self.num_to_float(contract['Tied-Up Capital (F)'])
@@ -73,7 +75,7 @@ class PortfolioExecutor:
             # calculate annualized ROCs
             a_roc = float(contract['Annualized ROC'][:-1]) / 100
             contract_data[9].append(round(a_roc * 100, 2))
-            close_ret = ((sell_price - contract_query['ask']) * qty * 100) / tuc
+            close_ret = ((sell_price - contract_ask) * qty * 100) / tuc
             dt = datetime.strptime(contract['Date Opened (F)'], '%m/%d/%Y').date()
             dse = (date.today() - dt).days
             if dse < min_close_days or contract_comps[5] == 'Call': 

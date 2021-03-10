@@ -4,8 +4,8 @@ import numpy.polynomial.polynomial as poly
 from src.scanner.base import ScannerBase
 from src.util.atomic import AtomicBool
 from src.api.tradier import TradierAPI
-from src.api.polygon import PolygonAPI
 from src.api.yfinance import YFinanceAPI
+from src.api.atomicfinance import AtomicYFinanceAPI
 from src.api.ycharts import YChartsAPI
 from datetime import datetime, date
 from itertools import permutations
@@ -64,8 +64,8 @@ class CreditPutSpreadScanner(ScannerBase):
 
         # build resources
         option_api = TradierAPI()
-        stock_api = PolygonAPI()
-        dividend_api = YFinanceAPI()
+        stock_api = YFinanceAPI()
+        dividend_api = AtomicYFinanceAPI()
         risk_free_rate_api = YChartsAPI()
         manager = multiprocessing.Manager()
         symbol_queue = manager.Queue()

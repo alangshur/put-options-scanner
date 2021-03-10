@@ -1,6 +1,6 @@
 from sklearn.linear_model import LinearRegression
 from src.scanner.base import ScannerBase
-from src.api.polygon import PolygonAPI
+from src.api.yfinance import YFinanceAPI
 from scipy.stats import pearsonr
 from queue import Queue, Empty
 from pathlib import Path
@@ -50,7 +50,7 @@ class EquityHistoryScanner(ScannerBase):
     def run(self):
 
         # build resources
-        api = PolygonAPI()
+        api = YFinanceAPI()
         manager = multiprocessing.Manager()
         symbol_queue = manager.Queue()
         result_map = manager.dict()
@@ -171,7 +171,7 @@ class EquityScannerProcess(multiprocessing.Process):
         self.process_name = self.__class__.__name__ + str(self.process_num)
 
         # fetch index
-        self.index_quotes = PolygonAPI().fetch_year_quotes(self.index)
+        self.index_quotes = YFinanceAPI().fetch_year_quotes(self.index)
         if self.index_quotes is None: raise Exception('Failed to fetch index data.')
         self.index_rets = self.__convert_price_to_return(
             np.array([q['close'] for q in self.index_quotes])
