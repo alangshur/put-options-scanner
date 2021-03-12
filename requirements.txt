@@ -25,6 +25,7 @@ kiwisolver==1.2.0
 llvmlite==0.34.0
 lxml==4.5.2
 matplotlib==3.3.2
+multitasking==0.0.9
 numba==0.51.2
 numpy==1.19.1
 oauthlib==3.1.0
@@ -66,3 +67,4 @@ uritemplate==3.0.1
 urllib3==1.25.10
 wcwidth==0.2.5
 yahoo-earnings-calendar==0.6.0
+yfinance==0.1.55
