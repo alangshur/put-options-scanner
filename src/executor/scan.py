@@ -11,7 +11,7 @@ class ScanExecutor:
 
     def run_put_scanner(self,
                     ignore_active_tickers=False, 
-                    aroc_limit=0.3,
+                    aroc_limit=0.2,
                     prob_itm_limit=0.25,
                     print_results=True,
                     refresh_results=False,

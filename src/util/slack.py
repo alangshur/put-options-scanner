@@ -8,12 +8,14 @@ load_dotenv(verbose=True)
 
 class SlackTextSender:
 
-    def __init__(self):
+    def __init__(self, test=False):
 
         # get slack client
         self.client = WebClient(token=os.environ['SLACK_BOT_TOKEN'])
+        self.test = test
         
     def send_message(self, subject, text):
+        if self.test: return
 
         # submit slack message
         try:

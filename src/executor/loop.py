@@ -24,7 +24,7 @@ class LoopMonitorExecutor:
 
         self.scan_executor = ScanExecutor()
         self.portfolio_executor = PortfolioExecutor()
-        self.text_sender = SlackTextSender()
+        self.text_sender = SlackTextSender(test=True)
         self.lifetime_notifications = {}
 
     def num_to_float(self, num):
